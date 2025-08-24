@@ -92,8 +92,6 @@ void initLIS3DH() {
   writeRegister(0x32, 0x47);  // INT1_THS: threshold ~0.5g (adjust later)
   writeRegister(0x33, 0x05);  // INT1_DURATION: 1 count (20ms at 50Hz)
   (void)readRegister(0x31);
-
-  Serial.println("LIS3DH Initialized");
 }
 
 
@@ -108,8 +106,6 @@ void startAP() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, AP_PASS);
   delay(1000);
-
-  Serial.printf("AP up ➜ SSID:%s  IP:%s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
 
   // respond with device hardware credentials
   server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -133,14 +129,11 @@ void startAP() {
     NULL,
     // onBody
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-      Serial.println("connection requested...");
-
       String body = String((char *)data).substring(0, len);
       StaticJsonDocument<200> doc;
       DeserializationError error = deserializeJson(doc, body);
 
       if (error) {
-        Serial.println("json error");
         request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
         return;
       }
@@ -151,7 +144,6 @@ void startAP() {
       deviceToken = doc["devicetoken"].as<String>();
 
       if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
-        Serial.println("cred error");
         request->send(400, "application/json", "{\"error\":\"Missing complete credentials\"}");
         return;
       }
@@ -164,8 +156,6 @@ void startAP() {
       prefs.end();
 
       if (connectToWiFi()) {
-        Serial.println("conected to wifi");
-
         // reseting device mode
         isDisconnected = false;
 
@@ -176,7 +166,6 @@ void startAP() {
         });
         return;
       } else {
-        Serial.println("wifi error");
         request->send(400, "application/json", "{\"message\":\"connection failed try again\"}");
       }
       return;
@@ -213,16 +202,12 @@ bool connectToWiFi() {
 
   WiFi.begin(homeSSID.c_str(), homePASS.c_str());
 
-  Serial.printf("Connecting to %s …\n", homeSSID.c_str());
-
   for (int i = 0; i < 20; ++i) {  // ≈10 s timeout
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("Connected, IP:%s\n", WiFi.localIP().toString().c_str());
       return true;
     }
     delay(500);
   }
-  Serial.println("STA connect failed");
   return false;
 }
 
@@ -246,7 +231,6 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   prefs.end();
 
   if (deviceToken.isEmpty()) {
-    Serial.println("no deviceToken");
     return;
   }
 
@@ -257,17 +241,10 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   String json = "{\"moisture\":" + String(moisture) + "}";
   int httpCode = http.POST(json);
 
-  Serial.printf("data send to db: %d\n", httpCode);
-
   if (httpCode > 0) {
     String payload = http.getString();
 
     aggregareIntructions(payload);  // perform pre-define changes given as intructions in the response payload
-
-    Serial.println("Response body:");
-    Serial.println(payload);
-  } else {
-    Serial.printf("POST failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
 
   http.end();
@@ -284,7 +261,6 @@ void aggregareIntructions(String payload) {
     // Check if the response contains specific key-action pairs
     if (doc.containsKey("deviceToken")) {  // deviceToken: renew JWT token
       String deviceToken = doc["deviceToken"];
-      // Serial.println("newToken: " + deviceToken);
       prefs.begin("wifi", false);
       prefs.putString("devicetoken", deviceToken);
       prefs.end();
@@ -294,17 +270,12 @@ void aggregareIntructions(String payload) {
 
       if (newTimeout >= 60ULL * 60ULL * 1000000ULL && newTimeout <= 24ULL * 60ULL * 60ULL * 1000000ULL) {  // safety check: larger than 1 hrs, less than 24 hrs
         deepSleepTimeOut = newTimeout;
-        Serial.printf("Updated sleep timeout to %llu µs\n", deepSleepTimeOut);
       }
     } else if (doc.containsKey("disconnected")) {  // disconnected: set device to disconnected and skip furthuer readings
       isDisconnected = true;
-      Serial.println("disconnected");
     } else if (doc.containsKey("deletedUser")) {  // deletedUser: the owner user of the device is deleted, set device to disconnected and skip furthuer readings
       isDisconnected = true;
-      Serial.println("user account is deleted");
     }
-  } else {
-    Serial.println("JSON parse error: " + String(error.c_str()));
   }
 }
 
@@ -330,7 +301,6 @@ void scheduleNextSensorRead() {
 // input (): N/A
 // output (void): initiate deep sleep timer, allow interruption by specific hardware pins
 void scheduleNextSleep() {
-  Serial.println("going sleep...");
   esp_sleep_enable_ext0_wakeup((gpio_num_t)LIS3DH_INT1_PIN, 1);
   esp_sleep_enable_timer_wakeup(deepSleepTimeOut);
   esp_deep_sleep_start();
@@ -378,14 +348,4 @@ void setup() {
 // II. loop
 // input (): N/A
 // output (void): N/A
-void loop() {
-  // if (digitalRead(LIS3DH_INT1_PIN) == HIGH) {
-  //   uint8_t src = readRegister(0x31);
-  //   Serial.print("INT1 pin HIGH - INT1_SRC = 0x");
-  //   Serial.println(src, HEX);
-  //   if (src & 0x40) {
-  //     Serial.println("Shake interrupt detected!");
-  //   }
-  //   delay(300); // debounce
-  // }
-}
+void loop() {}
