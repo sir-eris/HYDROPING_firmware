@@ -17,7 +17,7 @@
 The HydroPing system is an end-to-end solution that integrates custom embedded hardware, mobile applications, and a cloud backend to deliver reliable soil moisture monitoring and analytics. At its core, the STM32 microcontroller runs optimized firmware that manages power-efficient sensor sampling, data preprocessing, and wireless communication. The iOS app pairs with the device by activating Access Point (AP) Mode, providing users with real-time readings, local persistence, and a responsive dashboard for visualization. On the backend, a serverless architecture built with AWS Lambda and API Gateway securely ingests sensor data, performs time-series analysis, and exposes RESTful endpoints for app synchronization. The system design emphasizes modularity: the firmware ensures low-power continuous operation, the app handles user experience and offline caching, and the backend manages scalability and cross-device access. Together, these layers form a tightly integrated pipeline from hardware sensing to cloud intelligence, giving users actionable insights through a seamless and efficient interface.
 
 
-**What's HydroPing APP**
+**What's Sensor Probe**
 ---
 The Hydroping firmware is built for the ESP32 microcontroller and written in C/C++ using the ESP-IDF framework. It acts as the system’s control layer, handling sensor acquisition, power management, and communication with the backend through a lightweight HTTP-based API.
 
