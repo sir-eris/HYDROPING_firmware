@@ -1,4 +1,4 @@
-# HydroPing iOS App (_PRIVATE PROJECT_)
+# HydroPing Microcontroller (_PRIVATE PROJECT_)
 
 > _NOTE: This repo is not meant for public use and is only made available publicly for job acquisition purposes only._
 
