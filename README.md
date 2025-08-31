@@ -29,6 +29,6 @@ Key features of the firmware include:
 - System Reliability: A watchdog timer and structured error handling protect against lockups or corrupted readings. The firmware is designed for unattended operation, making the device resilient in real-world environments. By combining accurate sensing, efficient power use, and simple yet robust HTTP communication, the ESP32 firmware forms the core intelligence of Hydroping, seamlessly linking hardware, mobile app, and backend services.
 
 
-**Purchase the App**
+**Purchase a Probe**
 ---
 The probes are currently available to [pre-order](https://hydroping.com).
