@@ -31,4 +31,4 @@ Key features of the firmware include:
 
 **Purchase the App**
 ---
-The probes are currently available to [pre-order](https://hydroping.com)
+The probes are currently available to [pre-order](https://hydroping.com).
