@@ -7,7 +7,7 @@
 - LOC: 355
 - Team: 1
 - Timeline: 2mo
-- Language: Swift
+- Language: C++
 - Main Packages: I2C Wire, Sync Webserver, Json
 
 <sup>*</sup>Count excludes, .gitignore and other irrelevant files and directories.
