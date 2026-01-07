@@ -33,11 +33,12 @@ bool deviceInitialized = false;
 bool APModeActive = false;
 unsigned long APStartMillis = 0;
 // known at complie time
-constexpr unsigned long long SETUP_TIMEOUT_MS = 10ULL * 60 * 1000; // 10 min setup mode
+constexpr const char* DEVICE_ID = "";
 constexpr const char* HARDWARE_VERSION = "1.0";
 constexpr const char* FIRMWARE_VERSION = "1.0";
 constexpr const char* AP_SSID = "HydroPing-Wi-Fi";
 constexpr const char* AP_PASS = "";
+constexpr unsigned long long SETUP_TIMEOUT_MS = 5ULL * 60 * 1000; // 5 min setup mode
 
 
 /* ---------- Persisit through deep sleep ---------- */
@@ -107,6 +108,13 @@ void startAP() {
   WiFi.softAP(AP_SSID, AP_PASS);
   delay(1000);
 
+  // return is alive
+  server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String deviceId = WiFi.softAPmacAddress();
+    String payload = "{\"deviceId\":\"" + deviceId + "\"}";
+    request->send(200, "application/json", payload);
+  });
+
   // respond with device hardware credentials
   // server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
   //   DynamicJsonDocument doc(256);
@@ -156,6 +164,8 @@ void startAP() {
       prefs.end();
 
       if (connectToWiFi()) {
+        Serial.println("Connected!");
+        
         String deviceId = WiFi.softAPmacAddress();
         
         // call generateInitialDeviceToken and save the token
@@ -164,18 +174,21 @@ void startAP() {
         http.addHeader("Content-Type", "application/json");
         String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
         int httpCode = http.POST(json);
+        yield();
 
         if (httpCode == 200) {
           String payload = http.getString();
 
-          bool success = aggregareIntructions(payload);  // save deviceToken
+          // TODO: confirm if deviceToken is indeed sent
+
+          bool success = aggregateInstructions(payload);  // save deviceToken
 
           http.end();
 
           if (success) {
             http.end();
 
-            // reseting device mode
+            // reseting device mode on new activation
             isDisconnected = false;
 
             request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
@@ -186,6 +199,10 @@ void startAP() {
 
             return;
           }
+        } else {
+          Serial.println(httpCode);
+          String payload = http.getString();
+          Serial.println(payload);
         }
 
         http.end();
@@ -222,15 +239,19 @@ bool connectToWiFi() {
   homePASS = prefs.getString("pass", "");
   prefs.end();
 
+  Serial.printf("SSID: %s, PASS: %s\n", homeSSID.c_str(), homePASS.c_str());
+
   if (homeSSID.isEmpty() || homePASS.isEmpty()) return false;
 
   WiFi.begin(homeSSID.c_str(), homePASS.c_str());
 
   for (int i = 0; i < 20; ++i) {  // ≈10 s timeout
+  Serial.printf("calling wifi connect");
     if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("wifi connected");
       return true;
     }
-    delay(500);
+    delay(250);
   }
   return false;
 }
@@ -268,16 +289,17 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   if (httpCode > 0) {
     String payload = http.getString();
 
-    bool success = aggregareIntructions(payload);  // perform pre-define changes given as intructions in the response payload
+    bool success = aggregateInstructions(payload);  // perform pre-define changes given as intructions in the response payload
   }
 
   http.end();
 }
 
-// III. aggregareIntructions
+// III. aggregateInstructions
 // input (String): API JSON response payload
 // output (bool): check payload, execute small snippets based on defined keys in the payload
-bool aggregareIntructions(String payload) {
+// bool aggregateInstructions(String payload) {
+  bool aggregateInstructions(const String& payload) {
   StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -329,6 +351,8 @@ void scheduleNextSensorRead() {
 // input (): N/A
 // output (void): initiate deep sleep timer, allow interruption by specific hardware pins
 void scheduleNextSleep() {
+  Serial.println(("sleeping!"));
+
   esp_sleep_enable_ext0_wakeup((gpio_num_t)LIS3DH_INT1_PIN, 1);
   esp_sleep_enable_timer_wakeup(deepSleepTimeOut);
   esp_deep_sleep_start();
@@ -342,7 +366,7 @@ void scheduleNextSleep() {
 void setup() {
   Serial.begin(115200);
   // while (!Serial) delay(10);
-  // Serial.setDebugOutput(true);
+  Serial.setDebugOutput(true);
   delay(500);
 
   Wire.begin(SDA_PIN, SCL_PIN); // initialize I2C
@@ -356,6 +380,7 @@ void setup() {
   
   // loop cycle allwed during setup mode
   if (wokeFromShake && !inSetupMode) {
+    Serial.println(("Shook!"));
     inSetupMode = true;
     startAP();
     delay(200);
@@ -368,8 +393,10 @@ void setup() {
     scheduleNextSleep();
   }
 
+  delay(400);
+
   // communicate to backend & go back to sleep
-  scheduleNextSensorRead();
+  // scheduleNextSensorRead();
   scheduleNextSleep();
 }
 
