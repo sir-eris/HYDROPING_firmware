@@ -276,8 +276,8 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
 
 // III. aggregareIntructions
 // input (String): API JSON response payload
-// output (void): check payload, execute small snippets based on defined keys in the payload
-void aggregareIntructions(String payload) {
+// output (bool): check payload, execute small snippets based on defined keys in the payload
+bool aggregareIntructions(String payload) {
   StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
