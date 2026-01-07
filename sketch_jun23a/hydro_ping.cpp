@@ -108,16 +108,16 @@ void startAP() {
   delay(1000);
 
   // respond with device hardware credentials
-  server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
-    DynamicJsonDocument doc(256);
-    doc["deviceId"] = WiFi.softAPmacAddress();
-    doc["hardwareVersion"] = HARDWARE_VERSION;
-    doc["firmwareVersion"] = FIRMWARE_VERSION;
+  // server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
+  //   DynamicJsonDocument doc(256);
+  //   doc["deviceId"] = WiFi.softAPmacAddress();
+  //   doc["hardwareVersion"] = HARDWARE_VERSION;
+  //   doc["firmwareVersion"] = FIRMWARE_VERSION;
 
-    String json;
-    serializeJson(doc, json);
-    request->send(200, "application/json", json);
-  });
+  //   String json;
+  //   serializeJson(doc, json);
+  //   request->send(200, "application/json", json);
+  // });
 
   // receive and save STA wifi credentials
   server.on( "/connect", HTTP_POST,
@@ -141,9 +141,9 @@ void startAP() {
       homeSSID = doc["ssid"].as<String>();
       homePASS = doc["password"].as<String>();
       userID = doc["userid"].as<String>();
-      deviceToken = doc["devicetoken"].as<String>();
+      // deviceToken = doc["devicetoken"].as<String>();
 
-      if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
+      if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
         request->send(400, "application/json", "{\"error\":\"Missing complete credentials\"}");
         return;
       }
@@ -152,22 +152,46 @@ void startAP() {
       prefs.putString("ssid", homeSSID);
       prefs.putString("pass", homePASS);
       prefs.putString("userid", userID);
-      prefs.putString("devicetoken", deviceToken);
+      // prefs.putString("devicetoken", deviceToken);
       prefs.end();
 
       if (connectToWiFi()) {
-        // reseting device mode
-        isDisconnected = false;
+        String deviceId = WiFi.softAPmacAddress();
+        
+        // call generateInitialDeviceToken and save the token
+        HTTPClient http;
+        http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
+        http.addHeader("Content-Type", "application/json");
+        String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
+        int httpCode = http.POST(json);
 
-        request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
+        if (httpCode == 200) {
+          String payload = http.getString();
 
-        restartTicker.once(1, []() {
-          deviceInitialized = true;
-        });
-        return;
-      } else {
-        request->send(400, "application/json", "{\"message\":\"connection failed try again\"}");
+          bool success = aggregareIntructions(payload);  // save deviceToken
+
+          http.end();
+
+          if (success) {
+            http.end();
+
+            // reseting device mode
+            isDisconnected = false;
+
+            request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
+
+            restartTicker.once(1, []() {
+              deviceInitialized = true;
+            });
+
+            return;
+          }
+        }
+
+        http.end();
       }
+      
+      request->send(400, "application/json", "{\"message\":\"connection failed try again\"}");
       return;
     });
 
@@ -244,7 +268,7 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   if (httpCode > 0) {
     String payload = http.getString();
 
-    aggregareIntructions(payload);  // perform pre-define changes given as intructions in the response payload
+    bool success = aggregareIntructions(payload);  // perform pre-define changes given as intructions in the response payload
   }
 
   http.end();
@@ -276,7 +300,11 @@ void aggregareIntructions(String payload) {
     } else if (doc.containsKey("deletedUser")) {  // deletedUser: the owner user of the device is deleted, set device to disconnected and skip furthuer readings
       isDisconnected = true;
     }
+
+    return true;
   }
+
+  return false;
 }
 
 // IV. scheduleNextSensorRead
