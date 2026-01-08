@@ -109,11 +109,11 @@ void startAP() {
   delay(1000);
 
   // return is alive
-  server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String deviceId = WiFi.softAPmacAddress();
-    String payload = "{\"deviceId\":\"" + deviceId + "\"}";
-    request->send(200, "application/json", payload);
-  });
+  // server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
+  //   String deviceId = WiFi.softAPmacAddress();
+  //   String payload = "{\"deviceId\":\"" + deviceId + "\"}";
+  //   request->send(200, "application/json", payload);
+  // });
 
   // respond with device hardware credentials
   // server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -138,11 +138,14 @@ void startAP() {
     // onBody
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
       String body = String((char *)data).substring(0, len);
-      StaticJsonDocument<200> doc;
+      StaticJsonDocument<256> doc;
       DeserializationError error = deserializeJson(doc, body);
 
       if (error) {
         request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        request->onDisconnect([]() {
+          delay(1000);
+        });
         return;
       }
 
@@ -153,6 +156,9 @@ void startAP() {
 
       if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
         request->send(400, "application/json", "{\"error\":\"Missing complete credentials\"}");
+        request->onDisconnect([]() {
+          delay(1000);
+        });
         return;
       }
 
@@ -190,27 +196,34 @@ void startAP() {
             // reseting device mode on new activation
             isDisconnected = false;
 
-            request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
+            request->send(200, "application/json", "{\"hasError\":false}");
 
-            delay(500);
+            Serial.println("3");
 
-            restartTicker.once(2, []() {
-              deviceInitialized = true;
+            request->onDisconnect([]() {
+              delay(1000);
+
+              Serial.println("4");
+              
+              restartTicker.once(1, []() {
+                deviceInitialized = true;
+              });
             });
 
+            Serial.println("5");
             return;
           }
-        } else {
-          Serial.println(httpCode);
-          String payload = http.getString();
-          yield();
-          Serial.println(payload);
         }
 
         http.end();
       }
+
+      Serial.println("6");
       
       request->send(400, "application/json", "{\"message\":\"connection failed try again\"}");
+      request->onDisconnect([]() {
+        delay(1000);
+      });
       return;
     });
 
@@ -228,7 +241,6 @@ void stopAP() {
   delay(250);
   deviceInitialized = false,
   APModeActive = false;
-  delay(500);
 }
 
 // III. connectToWiFi
@@ -363,7 +375,7 @@ void scheduleNextSleep() {
 // output (void): initialize hardware layers, communicate to backend & go back to sleep, allow setup mode loop cycle
 void setup() {
   Serial.begin(115200);
-  // while (!Serial) delay(10);
+  while (!Serial) delay(10);
   Serial.setDebugOutput(true);
   delay(500);
 
@@ -381,20 +393,20 @@ void setup() {
     Serial.println(("Shook!"));
     inSetupMode = true;
     startAP();
-    delay(200);
+    delay(500);
     unsigned long startTime = millis();
     while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
       delay(100);
     }
     stopAP();
+    delay(500);
     inSetupMode = false;
     scheduleNextSleep();
   }
 
-  delay(400);
-
   // communicate to backend & go back to sleep
   // scheduleNextSensorRead();
+  delay(500);
   scheduleNextSleep();
 }
 
