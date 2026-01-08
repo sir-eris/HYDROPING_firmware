@@ -190,9 +190,11 @@ void startAP() {
             // reseting device mode on new activation
             isDisconnected = false;
 
-            request->send(200, "application/json", "{\"hasError\":\"false\"}");
+            request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
 
-            restartTicker.once(1, []() {
+            delay(500);
+
+            restartTicker.once(2, []() {
               deviceInitialized = true;
             });
 
