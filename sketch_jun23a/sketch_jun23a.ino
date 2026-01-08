@@ -10,11 +10,6 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
-
 
 /* ---------- DEFINITIONS ---------- */
 #define LIS3DH_ADDR 0x18
@@ -395,61 +390,39 @@ void setup() {
   initLIS3DH(); // initialize preferral
   delay(20);
 
-
-  // Initialize BLE
-  BLEDevice::init("HydroPingDevice");  // Device name
-
-  // Create BLE Server
-  BLEServer *pServer = BLEDevice::createServer();
-
-  // Optionally create a service
-  BLEService *pService = pServer->createService("12345678-1234-1234-1234-123456789abc");
-
-  // Start the service
-  pService->start();
-
-  // Start advertising
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(pService->getUUID());
-  pAdvertising->start();
-
-  Serial.println("BLE is on and advertising!");
-
-
-
   // deep sleep interrupted, triggered by specififc pin
-  // bool wokeFromShake = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
+  bool wokeFromShake = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
   
-  // // loop cycle allwed during setup mode
-  // if (wokeFromShake && !inSetupMode) {
+  // loop cycle allwed during setup mode
+  if (wokeFromShake && !inSetupMode) {
     
-  //   Serial.println(("Shook!"));
+    Serial.println(("Shook!"));
 
-  //   inSetupMode = true;
+    inSetupMode = true;
 
-  //   startAP();
+    startAP();
     
-  //   delay(500);
+    delay(500);
 
-  //   unsigned long startTime = millis();
+    unsigned long startTime = millis();
 
-  //   while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
-  //     delay(200);
-  //   }
+    while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
+      delay(200);
+    }
 
-  //   stopAP();
+    stopAP();
 
-  //   delay(500);
+    delay(500);
 
-  //   inSetupMode = false;
+    inSetupMode = false;
     
-  //   scheduleNextSleep();
-  // }
+    scheduleNextSleep();
+  }
 
-  // // communicate to backend & go back to sleep
-  // // scheduleNextSensorRead();
-  // delay(500);
-  // scheduleNextSleep();
+  // communicate to backend & go back to sleep
+  scheduleNextSensorRead();
+  delay(500);
+  scheduleNextSleep();
 }
 
 // II. loop
