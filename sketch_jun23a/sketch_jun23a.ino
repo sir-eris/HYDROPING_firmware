@@ -164,8 +164,6 @@ void startAP() {
       prefs.end();
 
       if (connectToWiFi()) {
-        Serial.println("Connected!");
-        
         String deviceId = WiFi.softAPmacAddress();
         
         // call generateInitialDeviceToken and save the token
@@ -178,6 +176,7 @@ void startAP() {
 
         if (httpCode == 200) {
           String payload = http.getString();
+          yield();
 
           // TODO: confirm if deviceToken is indeed sent
 
@@ -191,7 +190,7 @@ void startAP() {
             // reseting device mode on new activation
             isDisconnected = false;
 
-            request->send(200, "application/json", "{\"message\":\"connected to wifi\"}");
+            request->send(200, "application/json", "{\"hasError\":\"false\"}");
 
             restartTicker.once(1, []() {
               deviceInitialized = true;
@@ -202,6 +201,7 @@ void startAP() {
         } else {
           Serial.println(httpCode);
           String payload = http.getString();
+          yield();
           Serial.println(payload);
         }
 
@@ -239,16 +239,12 @@ bool connectToWiFi() {
   homePASS = prefs.getString("pass", "");
   prefs.end();
 
-  Serial.printf("SSID: %s, PASS: %s\n", homeSSID.c_str(), homePASS.c_str());
-
   if (homeSSID.isEmpty() || homePASS.isEmpty()) return false;
 
   WiFi.begin(homeSSID.c_str(), homePASS.c_str());
 
   for (int i = 0; i < 20; ++i) {  // ≈10 s timeout
-  Serial.printf("calling wifi connect");
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("wifi connected");
       return true;
     }
     delay(250);
