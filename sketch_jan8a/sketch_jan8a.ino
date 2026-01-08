@@ -1,0 +1,554 @@
+/* ---------- LIBRARIES ---------- */
+#include <Wire.h>
+#include <WiFi.h>
+#include <Ticker.h>
+#include <AsyncTCP.h>
+#include <esp_sleep.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <Preferences.h>
+#include <ArduinoJson.h>
+#include <ESPAsyncWebServer.h>
+
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+
+/* ---------- DEFINITIONS ---------- */
+#define LIS3DH_ADDR 0x18
+#define LIS3DH_INT1_PIN 2
+#define LIS3DH_INT2_PIN 1
+#define SDA_PIN 3
+#define SCL_PIN 4
+#define TOUCH_1 12
+// Custom service & characteristic UUIDs
+#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
+#define CREDENTIALS_UUID "87654321-4321-4321-4321-cba987654321"
+
+
+/* ---------- Object initializations ---------- */
+AsyncWebServer server(80);
+Ticker restartTicker;
+Preferences prefs;
+// pre-warm-up
+String homeSSID, homePASS, userID, deviceToken;
+
+
+/* ---------- Device modes and configurations ---------- */
+bool deviceInitialized = false;
+bool APModeActive = false;
+unsigned long APStartMillis = 0;
+// known at complie time
+constexpr const char *HARDWARE_VERSION = "1.0";
+constexpr const char *FIRMWARE_VERSION = "1.0";
+constexpr const char *AP_SSID = "HydroPing-PG1A2B3F";
+constexpr const char *AP_PASS = "";
+constexpr unsigned long long SETUP_TIMEOUT_MS = 5ULL * 60 * 1000;  // 5 min setup mode
+
+
+/* ---------- Persisit through deep sleep ---------- */
+RTC_DATA_ATTR bool isDisconnected = false;
+RTC_DATA_ATTR bool inSetupMode = false;
+RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;  // default: 12h
+
+
+/* ---------- LIS3DH functions ---------- */
+// I. writeRegister
+// input (uint8_t, uint8_t): seletcted register, specific value
+// output (void): use I2C to write a configuration to the chip at specific register
+void writeRegister(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(LIS3DH_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
+}
+
+// II. readRegister
+// input (uint8_t): seletcted register
+// output (void): use I2C to read a configuration from the chip at specific register
+uint8_t readRegister(uint8_t reg) {
+  Wire.beginTransmission(LIS3DH_ADDR);
+  Wire.write(reg);
+  Wire.endTransmission(false);  // Restart
+  Wire.requestFrom(LIS3DH_ADDR, (uint8_t)1);
+  return Wire.read();
+}
+
+// II. initLIS3DH
+// input (): N/A
+// output (void): initialize the chip
+void initLIS3DH() {
+  // writeRegister(0x20, 0x47); // CTRL_REG1: 50 Hz, XYZ enabled
+  // writeRegister(0x21, 0x40); // CTRL_REG2: High-pass filter to click
+  // writeRegister(0x22, 0x80); // CTRL_REG3: Click interrupt on INT1
+  // writeRegister(0x23, 0x30); // CTRL_REG4: ±8g full scale for less sensitivity
+  // writeRegister(0x24, 0x00); // CTRL_REG5: disable latching on INT2
+  // writeRegister(0x32, 0x04); // CLICK_CFG: enable double tap on Z
+  // writeRegister(0x33, 0x7F); // CLICK_THS: threshold
+  // writeRegister(0x34, 0x10); // TIME_LIMIT: time between taps
+  // writeRegister(0x35, 0x40); // TIME_LATENCY
+  // writeRegister(0x36, 0xC0); // TIME_WINDOW
+
+  writeRegister(0x20, 0x47);  // CTRL_REG1: 50Hz, XYZ enabled
+  writeRegister(0x21, 0x10);  // CTRL_REG2: HPF disabled (simplify for now)
+  writeRegister(0x22, 0x40);  // CTRL_REG3: route INT1 to INT1 pin
+  writeRegister(0x23, 0x10);  // CTRL_REG4: ±4g scale, high resolution
+  writeRegister(0x24, 0x08);  // CTRL_REG5: latch interrupt on INT1
+  writeRegister(0x30, 0x2A);  // INT1_CFG: enable XH, YH, ZH
+  writeRegister(0x32, 0x47);  // INT1_THS: threshold ~0.5g (adjust later)
+  writeRegister(0x33, 0x05);  // INT1_DURATION: 1 count (20ms at 50Hz)
+  (void)readRegister(0x31);
+}
+
+
+/* ---------- WiFi function ---------- */
+// I. startBLE
+// input (): N/A
+// output (void): activate setup mode, start async webserver, listen and process
+// endpoints: /info, /connect
+void startBLE() {
+  APModeActive = true;
+  APStartMillis = millis();
+  WiFi.mode(WIFI_STA);
+
+  delay(500);
+
+  // 1. Initialize BLE
+  BLEDevice::init(AP_SSID);
+
+  // 2. Create BLE server
+  BLEServer *pServer = BLEDevice::createServer();
+
+  // 3. Create BLE service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // 4. Create BLE characteristic
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+    CREDENTIALS_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+
+  // Optional: set callbacks to handle writes
+  // pCharacteristic->setCallbacks(new CredentialsCallbacks());
+
+  // 5. Start the service
+  pService->start();
+
+  // 6. Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->start();
+
+  Serial.println("BLE initialized and advertising started!");
+
+  // // receive and save STA wifi credentials
+  // server.on(
+  //   "/connect", HTTP_POST,
+  //   // onRequest: send initial response later in onBody
+  //   [](AsyncWebServerRequest *request) {
+  //     // We won't send response here because body not yet received
+  //   },
+  //   // onUpload (not used)
+  //   NULL,
+  //   // onBody
+  //   [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+  //     String body = String((char *)data).substring(0, len);
+  //     StaticJsonDocument<256> doc;
+  //     DeserializationError error = deserializeJson(doc, body);
+
+  //     if (error) {
+  //       request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+  //       request->onDisconnect([]() {
+  //         delay(1000);
+  //       });
+  //       return;
+  //     }
+
+  //     homeSSID = doc["ssid"].as<String>();
+  //     homePASS = doc["password"].as<String>();
+  //     userID = doc["userid"].as<String>();
+  //     // deviceToken = doc["devicetoken"].as<String>();
+
+  //     if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
+  //       request->send(400, "application/json", "{\"error\":\"Missing complete credentials\"}");
+  //       request->onDisconnect([]() {
+  //         delay(1000);
+  //       });
+  //       return;
+  //     }
+
+  //     prefs.begin("wifi", false);
+  //     prefs.putString("ssid", homeSSID);
+  //     prefs.putString("pass", homePASS);
+  //     prefs.putString("userid", userID);
+  //     // prefs.putString("devicetoken", deviceToken);
+  //     prefs.end();
+
+  //     if (connectToWiFi()) {
+  //       String deviceId = WiFi.softAPmacAddress();
+
+  //       // call generateInitialDeviceToken and save the token
+  //       HTTPClient http;
+  //       http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
+  //       http.addHeader("Content-Type", "application/json");
+  //       String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
+  //       int httpCode = http.POST(json);
+  //       yield();
+
+  //       if (httpCode == 200) {
+  //         String payload = http.getString();
+  //         yield();
+
+  //         // TODO: confirm if deviceToken is indeed sent
+
+  //         bool success = aggregateInstructions(payload);  // save deviceToken
+
+  //         http.end();
+
+  //         if (success) {
+  //           // reseting device mode on new activation
+  //           isDisconnected = false;
+
+  //           request->send(200, "application/json", "{\"hasError\":false}");
+
+  //           request->onDisconnect([]() {
+  //             delay(1000);
+
+  //             restartTicker.once(1, []() {
+  //               deviceInitialized = true;
+  //             });
+  //           });
+
+  //           return;
+  //         }
+
+  //         // issue with payload aka device token
+  //         request->send(400, "application/json", "{\"hasError\":true}");
+  //         request->onDisconnect([]() {
+  //           delay(1000);
+  //         });
+  //       }
+
+  //       http.end();
+
+  //       // http not 200
+  //       request->send(400, "application/json", "{\"hasError\":true}");
+  //       request->onDisconnect([]() {
+  //         delay(1000);
+  //       });
+  //     }
+
+  //     // couldnt connect to wifi
+  //     request->send(400, "application/json", "{\"hasError\":true}");
+  //     request->onDisconnect([]() {
+  //       delay(1000);
+  //     });
+  //     return;
+  //   });
+
+
+  // server.begin();
+}
+
+// II. stopBLE
+// input (): N/A
+// output (void): deactivate setup mode
+void stopBLE() {
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  delay(250);
+
+  BLEDevice::deinit(true);
+
+  delay(250);
+
+  deviceInitialized = false,
+  APModeActive = false;
+}
+
+// III. connectToWiFi
+// input (): N/A
+// output (bool): try to connect to wifi and return success state
+// NOTE: wifi mode set externally before calling this function
+bool connectToWiFi() {
+  prefs.begin("wifi", true);
+  homeSSID = prefs.getString("ssid", "");
+  homePASS = prefs.getString("pass", "");
+  prefs.end();
+
+  if (homeSSID.isEmpty() || homePASS.isEmpty()) return false;
+
+  WiFi.begin(homeSSID.c_str(), homePASS.c_str());
+
+  for (int i = 0; i < 20; ++i) {  // ≈10 s timeout
+    if (WiFi.status() == WL_CONNECTED) {
+      return true;
+    }
+    delay(250);
+  }
+  return false;
+}
+
+/* ---------- Backend data communication functions ---------- */
+// I. readTouchAvg
+// input (int): hardware touch pin number
+// output (uint32_t): avg the capacitive level for some (samples) at some (5 microsecond) interval
+uint32_t readTouchAvg(int pin, int samples = 8) {
+  uint32_t total = 0;
+  for (int i = 0; i < samples; i++, delay(5)) total += touchRead(pin);
+  return total / samples;
+}
+
+// II. sendDataToDB
+// input (String, unit32_t): hardware MacAddress, re
+// output (void): send moisture value to backend, check and handle resposnse, call to perform any instructions in the response payload
+void sendDataToDB(String macAddress, uint32_t moisture) {
+  prefs.begin("wifi", true);
+  deviceToken = prefs.getString("devicetoken", "");
+  prefs.end();
+
+  if (deviceToken.isEmpty()) {
+    return;
+  }
+
+  HTTPClient http;
+  http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading");
+  http.addHeader("Authorization", "Bearer " + deviceToken);
+  http.addHeader("Content-Type", "application/json");
+  String json = "{\"moisture\":" + String(moisture) + "}";
+  int httpCode = http.POST(json);
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+
+    bool success = aggregateInstructions(payload);  // perform pre-define changes given as intructions in the response payload
+
+    // TODO: on false ???
+  }
+
+  http.end();
+}
+
+// III. aggregateInstructions
+// input (String): API JSON response payload
+// output (bool): check payload, execute small snippets based on defined keys in the payload
+// bool aggregateInstructions(String payload) {
+bool aggregateInstructions(const String &payload) {
+  StaticJsonDocument<1024> doc;
+  DeserializationError error = deserializeJson(doc, payload);
+
+  if (!error) {
+    // Check if the response contains specific key-action pairs
+    if (doc.containsKey("deviceToken")) {  // deviceToken: renew JWT token
+      String deviceToken = doc["deviceToken"];
+      prefs.begin("wifi", false);
+      prefs.putString("devicetoken", deviceToken);
+      prefs.end();
+    } else if (doc.containsKey("sleepTimeout")) {  // sleepTimeout: change deep sleep cycle timeout
+      // expected in microseconds
+      uint64_t newTimeout = doc["sleepTimeout"];
+
+      if (newTimeout >= 60ULL * 60ULL * 1000000ULL && newTimeout <= 24ULL * 60ULL * 60ULL * 1000000ULL) {  // safety check: larger than 1 hrs, less than 24 hrs
+        deepSleepTimeOut = newTimeout;
+      }
+    } else if (doc.containsKey("disconnected")) {  // disconnected: set device to disconnected and skip furthuer readings
+      isDisconnected = true;
+    } else if (doc.containsKey("deletedUser")) {  // deletedUser: the owner user of the device is deleted, set device to disconnected and skip furthuer readings
+      isDisconnected = true;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+// IV. scheduleNextSensorRead
+// input (): N/A
+// output (void): call readTouchAvg, set wifi mode to STA, connect to wifi, get hardware MacAddress, call sendDataToDB
+void scheduleNextSensorRead() {
+  if (isDisconnected) return;
+
+  uint32_t moisture = readTouchAvg(TOUCH_1);
+
+  delay(250);
+
+  WiFi.mode(WIFI_STA);
+
+  delay(250);
+
+  if (connectToWiFi()) {
+    String macAddress = WiFi.macAddress();
+    sendDataToDB(macAddress, moisture);
+  }
+
+  // turn wifi off
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+
+/* ---------- Deep sleep functions ---------- */
+// I. scheduleNextSleep
+// input (): N/A
+// output (void): initiate deep sleep timer, allow interruption by specific hardware pins
+void scheduleNextSleep() {
+  Serial.println(("sleeping!"));
+
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)LIS3DH_INT1_PIN, 1);
+  esp_sleep_enable_timer_wakeup(deepSleepTimeOut);
+  esp_deep_sleep_start();
+}
+
+
+/* ---------- ESP32 STATIS FUNCTIONS ---------- */
+// I. setup
+// input (): N/A
+// output (void): initialize hardware layers, communicate to backend & go back to sleep, allow setup mode loop cycle
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) delay(10);
+  Serial.setDebugOutput(true);
+  delay(500);
+
+  Wire.begin(SDA_PIN, SCL_PIN);            // initialize I2C
+  pinMode(LIS3DH_INT1_PIN, INPUT_PULLUP);  // activate preferral
+  delay(20);
+  initLIS3DH();  // initialize preferral
+  delay(20);
+
+  // deep sleep interrupted, triggered by specififc pin
+  bool wokeFromShake = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
+
+  // loop cycle allwed during setup mode
+  if (wokeFromShake && !inSetupMode) {
+
+    Serial.println(("Shook!"));
+
+    inSetupMode = true;
+
+    startBLE();
+
+    delay(500);
+
+    unsigned long startTime = millis();
+
+    while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
+      delay(200);
+    }
+
+    stopBLE();
+
+    delay(500);
+
+    inSetupMode = false;
+
+    scheduleNextSleep();
+  }
+
+  // communicate to backend & go back to sleep
+  // scheduleNextSensorRead();
+  delay(500);
+  scheduleNextSleep();
+}
+
+class CredentialsCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) override {
+    String value = pCharacteristic->getValue();
+    
+    if (value.length() == 0) return;
+
+    Serial.println("Received BLE data: " + String(value.c_str()));
+
+    DynamicJsonDocument doc(256);
+    DeserializationError error = deserializeJson(doc, value);
+    if (error) {
+      Serial.println("Invalid JSON received via BLE!");
+      return;
+    }
+
+    String action = doc["action"] | "";  // default to empty string
+
+    if (action == "connectWiFi") {
+      homeSSID = doc["ssid"].as<String>();
+      homePASS = doc["password"].as<String>();
+      userID = doc["userid"].as<String>();
+      // deviceToken = doc["devicetoken"].as<String>();
+
+      if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
+        pCharacteristic->setValue("{\"status\":\"wrong cred\"}");
+        pCharacteristic->notify();
+      }
+
+      prefs.begin("wifi", false);
+      prefs.putString("ssid", homeSSID);
+      prefs.putString("pass", homePASS);
+      prefs.putString("userid", userID);
+      // prefs.putString("devicetoken", deviceToken);
+      prefs.end();
+
+      Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
+
+      if (connectToWiFi()) {
+        String deviceId = WiFi.softAPmacAddress();
+
+        // call generateInitialDeviceToken and save the token
+        HTTPClient http;
+        http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
+        http.addHeader("Content-Type", "application/json");
+        String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
+        int httpCode = http.POST(json);
+        yield();
+
+        if (httpCode == 200) {
+          String payload = http.getString();
+          yield();
+
+          // TODO: confirm if deviceToken is indeed sent
+
+          bool success = aggregateInstructions(payload);  // save deviceToken
+
+          http.end();
+
+          if (success) {
+            // reseting device mode on new activation
+            isDisconnected = false;
+
+            pCharacteristic->setValue("{\"status\":\"success\"}");
+            pCharacteristic->notify();
+
+            restartTicker.once(1, []() {
+                deviceInitialized = true;
+              });
+
+            return;
+          }
+
+          // issue with payload aka device token
+          pCharacteristic->setValue("{\"status\":\"issue with token\"}");
+          pCharacteristic->notify();
+        }
+
+        http.end();
+
+        // http not 200
+        pCharacteristic->setValue("{\"status\":\"not 200\"}");
+        pCharacteristic->notify();
+      }
+
+    } else {
+      Serial.println("Unknown action requested");
+      pCharacteristic->setValue("{\"status\":\"unknown\"}");
+      pCharacteristic->notify();
+    }
+  }
+};
+
+
+// II. loop
+// input (): N/A
+// output (void): N/A
+void loop() {}
