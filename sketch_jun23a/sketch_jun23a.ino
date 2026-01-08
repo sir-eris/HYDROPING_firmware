@@ -21,6 +21,7 @@
 
 
 /* ---------- Object initializations ---------- */
+TaskHandle_t backendTaskHandle = NULL;
 AsyncWebServer server(80);
 Ticker restartTicker;
 Preferences prefs;
@@ -33,10 +34,9 @@ bool deviceInitialized = false;
 bool APModeActive = false;
 unsigned long APStartMillis = 0;
 // known at complie time
-constexpr const char* DEVICE_ID = "";
 constexpr const char* HARDWARE_VERSION = "1.0";
 constexpr const char* FIRMWARE_VERSION = "1.0";
-constexpr const char* AP_SSID = "HydroPing-Wi-Fi";
+constexpr const char* AP_SSID = "HydroPing-PG1A2B3F";
 constexpr const char* AP_PASS = "";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 5ULL * 60 * 1000; // 5 min setup mode
 
@@ -191,42 +191,47 @@ void startAP() {
           http.end();
 
           if (success) {
-            http.end();
-
             // reseting device mode on new activation
             isDisconnected = false;
 
             request->send(200, "application/json", "{\"hasError\":false}");
 
-            Serial.println("3");
-
             request->onDisconnect([]() {
               delay(1000);
-
-              Serial.println("4");
               
               restartTicker.once(1, []() {
                 deviceInitialized = true;
               });
             });
 
-            Serial.println("5");
             return;
           }
+
+          // issue with payload aka device token
+          request->send(400, "application/json", "{\"hasError\":true}");
+          request->onDisconnect([]() {
+            delay(1000);
+          });
         }
 
         http.end();
+
+        // http not 200
+        request->send(400, "application/json", "{\"hasError\":true}");
+        request->onDisconnect([]() {
+          delay(1000);
+        });
       }
 
-      Serial.println("6");
-      
-      request->send(400, "application/json", "{\"message\":\"connection failed try again\"}");
+      // couldnt connect to wifi      
+      request->send(400, "application/json", "{\"hasError\":true}");
       request->onDisconnect([]() {
         delay(1000);
       });
       return;
     });
 
+  
   server.begin();
 }
 
@@ -390,17 +395,27 @@ void setup() {
   
   // loop cycle allwed during setup mode
   if (wokeFromShake && !inSetupMode) {
+    
     Serial.println(("Shook!"));
+
     inSetupMode = true;
+
     startAP();
+    
     delay(500);
+
     unsigned long startTime = millis();
+
     while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
-      delay(100);
+      delay(200);
     }
+
     stopAP();
+
     delay(500);
+
     inSetupMode = false;
+    
     scheduleNextSleep();
   }
 
