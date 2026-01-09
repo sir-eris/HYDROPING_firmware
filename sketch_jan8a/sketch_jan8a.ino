@@ -23,16 +23,16 @@
 #define SCL_PIN 4
 #define TOUCH_1 12
 // Custom service & characteristic UUIDs
-#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"  // service container
+#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"      // service container
 #define CREDENTIALS_UUID "12345678-1234-1234-1234-123456789abd"  // write Wi-Fi credentials
-#define STATUS_UUID "12345678-1234-1234-1234-123456789abe"  // notify status back
+#define STATUS_UUID "12345678-1234-1234-1234-123456789abe"       // notify status back
 
 
 
 /* ---------- Object initializations ---------- */
-// AsyncWebServer server(80);
 // Ticker restartTicker;
 Preferences prefs;
+BLECharacteristic *pStatusChar;
 // pre-warm-up
 String homeSSID, homePASS, userID, deviceToken;
 
@@ -58,139 +58,120 @@ RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;  /
 bool connectToWiFi();
 bool aggregateInstructions(const String &payload);
 
-BLECharacteristic* pStatusChar; // global or static
-
 class CredentialsCallbacks : public BLECharacteristicCallbacks {
 public:
-    CredentialsCallbacks(BLECharacteristic* statusChar) {
-        pStatusChar = statusChar;
-    }
+  CredentialsCallbacks(BLECharacteristic *statusChar) {
+    pStatusChar = statusChar;
+  }
 
-    void onWrite(BLECharacteristic *pChar) override {
-        String value = pChar->getValue();
-        Serial.println("Received BLE data: " + value);
+  void onWrite(BLECharacteristic *pChar) override {
+    String value = pChar->getValue();
+    Serial.println("Received BLE data: " + value);
 
-        // respond via status characteristic
-        if (pStatusChar) {
-            pStatusChar->setValue("{\"status\":\"received\"}");
-            pStatusChar->notify();
+    // respond via status characteristic
+    if (pStatusChar) {
+      DynamicJsonDocument doc(256);
+      DeserializationError error = deserializeJson(doc, value);
+      if (error) {
+        pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Invalid request.\"}");
+        pStatusChar->notify();
+
+        return;
+      }
+
+      String action = doc["action"] | "";
+      
+      if (action == "connectWiFi") {
+        homeSSID = doc["ssid"].as<String>();
+        homePASS = doc["password"].as<String>();
+        userID = doc["userid"].as<String>();
+        // deviceToken = doc["devicetoken"].as<String>();
+
+        if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
+          pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Missing required parameters.\"}");
+          pStatusChar->notify();
+
+          return;
         }
+
+        prefs.begin("wifi", false);
+        prefs.putString("ssid", homeSSID);
+        prefs.putString("pass", homePASS);
+        prefs.putString("userid", userID);
+        // prefs.putString("devicetoken", deviceToken);
+        prefs.end();
+
+        Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
+
+        if (connectToWiFi()) {
+          // String deviceId = WiFi.macAddress();
+          // String deviceId = "B6:3A:45:34:B8:34";
+
+          // call generateInitialDeviceToken and save the token
+          // HTTPClient http;
+          // http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
+          // http.addHeader("Content-Type", "application/json");
+          // String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
+          // int httpCode = http.POST(json);
+          // yield();
+
+          // if (httpCode == 200) {
+          //   String payload = http.getString();
+          //   yield();
+
+          //   bool success = aggregateInstructions(payload);  // save deviceToken
+
+          //   http.end();
+
+          //   if (success) {
+          //     // reseting device mode on new activation
+          //     isDisconnected = false;
+
+          //     pStatusChar->setValue("{\"hasError\":false,\"errorMessage\":\"\"}");
+          //     pStatusChar->notify();
+
+          //     delay(250);
+
+          //     deviceInitialized = true;
+
+          //     return;
+          //   }
+
+          //   // issue with payload aka device token
+          //   pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"issue with token\"}");
+          //   pStatusChar->notify();
+
+          //   return;
+          // }
+
+          // http.end();
+
+         isDisconnected = false;
+
+          pStatusChar->setValue("{\"hasError\":false,\"errorMessage\":\"\"}");
+          pStatusChar->notify();
+
+          delay(250);
+
+          deviceInitialized = true;
+
+          return;
+        } else {
+          pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Check Wi-Fi credentials and try again.\"}");
+          pStatusChar->notify();
+
+          return;
+        }
+
+      } else {
+        pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"unknown action\"}");
+        pStatusChar->notify();
+
+        return;
+      }
     }
+  }
 };
-
-
-
-// class CredentialsCallbacks : public BLECharacteristicCallbacks {
-//   void onWrite(BLECharacteristic *pCharacteristic) override {
-//     String value = pCharacteristic->getValue();
-  
-//     if (value.length() == 0) {
-//       return;
-//     }
-    
-
-//     // Serial.println("Received BLE data: " + String(value.c_str()));
-
-//     // DynamicJsonDocument doc(256);
-//     // DeserializationError error = deserializeJson(doc, value);
-//     // if (error) {
-//     //   Serial.println("Invalid JSON received via BLE!");
-//     //   return;
-//     // }
-
-//     // String action = doc["action"] | "";  // default to empty string
-
-//     Serial.println("Unknown action requested");
-
-//     pCharacteristic->setValue("{\"status\":\"unknown\"}");
-//     pCharacteristic->notify();
-
-//     // if (action == "connectWiFi") {
-//     //   homeSSID = doc["ssid"].as<String>();
-//     //   homePASS = doc["password"].as<String>();
-//     //   userID = doc["userid"].as<String>();
-//     //   // deviceToken = doc["devicetoken"].as<String>();
-
-//     //   if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
-//     //     pCharacteristic->setValue("{\"status\":\"wrong cred\"}");
-//     //     pCharacteristic->notify();
-//     //   }
-
-//     //   prefs.begin("wifi", false);
-//     //   prefs.putString("ssid", homeSSID);
-//     //   prefs.putString("pass", homePASS);
-//     //   prefs.putString("userid", userID);
-//     //   // prefs.putString("devicetoken", deviceToken);
-//     //   prefs.end();
-
-//     //   Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
-
-//     //   if (connectToWiFi()) {
-//     //     // String deviceId = WiFi.macAddress();
-//     //     // String deviceId = "B6:3A:45:34:B8:34";
-
-//     //     // call generateInitialDeviceToken and save the token
-//     //     // HTTPClient http;
-//     //     // http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
-//     //     // http.addHeader("Content-Type", "application/json");
-//     //     // String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
-//     //     // int httpCode = http.POST(json);
-//     //     // yield();
-
-//     //     // if (httpCode == 200) {
-//     //     //   String payload = http.getString();
-//     //     //   yield();
-
-//     //     //   // TODO: confirm if deviceToken is indeed sent
-
-//     //     //   bool success = aggregateInstructions(payload);  // save deviceToken
-
-//     //     //   http.end();
-
-//     //     //   if (success) {
-//     //     //     // reseting device mode on new activation
-//     //     //     isDisconnected = false;
-
-//     //     //     pCharacteristic->setValue("{\"status\":\"success\"}");
-//     //     //     pCharacteristic->notify();
-
-//     //     //     // restartTicker.once(1, []() {
-//     //     //     //     deviceInitialized = true;
-//     //     //     //   });
-
-//     //     //     delay(250);
-
-//     //     //     deviceInitialized = true;
-
-//     //     //     return;
-//     //     //   }
-
-//     //     //   Serial.println("no token");
-
-//     //     //   // issue with payload aka device token
-//     //     //   pCharacteristic->setValue("{\"status\":\"issue with token\"}");
-//     //     //   pCharacteristic->notify();
-//     //     // }
-
-//     //     // http.end();
-
-//     //     // http not 200
-//     //     pCharacteristic->setValue("{\"status\":\"not 200\"}");
-//     //     pCharacteristic->notify();
-//     //   } else {
-//     //     Serial.println("wifi no connect");
-//     //     pCharacteristic->setValue("{\"status\":\"wifi no connect\"}");
-//     //     pCharacteristic->notify();
-//     //   }
-
-//     // } else {
-//     //   Serial.println("Unknown action requested");
-//     //   pCharacteristic->setValue("{\"status\":\"unknown\"}");
-//     //   pCharacteristic->notify();
-//     // }
-//   }
-// };
-
 
 /* ---------- LIS3DH functions ---------- */
 // I. writeRegister
@@ -253,15 +234,13 @@ void startBLE() {
 
   // 4b. Status characteristic
   pStatusChar = pService->createCharacteristic(
-      STATUS_UUID,
-      BLECharacteristic::PROPERTY_NOTIFY
-  );
+    STATUS_UUID,
+    BLECharacteristic::PROPERTY_NOTIFY);
 
   // 4a. Credentials characteristic
   BLECharacteristic *pCredentialsChar = pService->createCharacteristic(
-      CREDENTIALS_UUID,
-      BLECharacteristic::PROPERTY_WRITE
-  );
+    CREDENTIALS_UUID,
+    BLECharacteristic::PROPERTY_WRITE);
   pCredentialsChar->setCallbacks(new CredentialsCallbacks(pStatusChar));
 
   // 5. Start the service
@@ -361,7 +340,7 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
 // output (bool): check payload, execute small snippets based on defined keys in the payload
 // bool aggregateInstructions(String payload) {
 bool aggregateInstructions(const String &payload) {
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
   if (!error) {
