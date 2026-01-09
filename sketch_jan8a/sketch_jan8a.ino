@@ -46,7 +46,7 @@ constexpr const char *HARDWARE_VERSION = "1.0";
 constexpr const char *FIRMWARE_VERSION = "1.0";
 constexpr const char *AP_SSID = "HydroPing-PG1A2B3F";
 // constexpr const char *AP_PASS = "";
-constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
+constexpr unsigned long long SETUP_TIMEOUT_MS = 3ULL * 60 * 1000;  // 3 min setup mode
 
 
 /* ---------- Persisit through deep sleep ---------- */
@@ -66,14 +66,16 @@ public:
 
   void onWrite(BLECharacteristic *pChar) override {
     String value = pChar->getValue();
-    Serial.println("Received BLE data: " + value);
+    // Serial.println("Received BLE data: " + value);
 
     // respond via status characteristic
     if (pStatusChar) {
+      
       DynamicJsonDocument doc(256);
       DeserializationError error = deserializeJson(doc, value);
+      
       if (error) {
-        pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Invalid request.\"}");
+        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Invalid request.\"}");
         pStatusChar->notify();
 
         return;
@@ -85,9 +87,9 @@ public:
         homeSSID = doc["ssid"].as<String>();
         homePASS = doc["password"].as<String>();
         userID = doc["userid"].as<String>();
-        // deviceToken = doc["devicetoken"].as<String>();
+        deviceToken = doc["devicetoken"].as<String>();
 
-        if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
+        if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
           pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Missing required parameters.\"}");
           pStatusChar->notify();
 
@@ -98,58 +100,16 @@ public:
         prefs.putString("ssid", homeSSID);
         prefs.putString("pass", homePASS);
         prefs.putString("userid", userID);
-        // prefs.putString("devicetoken", deviceToken);
+        prefs.putString("devicetoken", deviceToken);
         prefs.end();
 
-        Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
+        // Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
 
         if (connectToWiFi()) {
-          // String deviceId = WiFi.macAddress();
-          // String deviceId = "B6:3A:45:34:B8:34";
-
-          // call generateInitialDeviceToken and save the token
-          // HTTPClient http;
-          // http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
-          // http.addHeader("Content-Type", "application/json");
-          // String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
-          // int httpCode = http.POST(json);
-          // yield();
-
-          // if (httpCode == 200) {
-          //   String payload = http.getString();
-          //   yield();
-
-          //   bool success = aggregateInstructions(payload);  // save deviceToken
-
-          //   http.end();
-
-          //   if (success) {
-          //     // reseting device mode on new activation
-          //     isDisconnected = false;
-
-          //     pStatusChar->setValue("{\"hasError\":false,\"errorMessage\":\"\"}");
-          //     pStatusChar->notify();
-
-          //     delay(250);
-
-          //     deviceInitialized = true;
-
-          //     return;
-          //   }
-
-          //   // issue with payload aka device token
-          //   pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"issue with token\"}");
-          //   pStatusChar->notify();
-
-          //   return;
-          // }
-
-          // http.end();
-
+          
          isDisconnected = false;
 
           pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":false,\"errorMessage\":\"\"}");
-
           pStatusChar->notify();
 
           delay(250);
@@ -418,10 +378,10 @@ void setup() {
   Serial.setDebugOutput(true);
   delay(500);
 
-  Wire.begin(SDA_PIN, SCL_PIN);            // initialize I2C
-  pinMode(LIS3DH_INT1_PIN, INPUT_PULLUP);  // activate preferral
+  Wire.begin(SDA_PIN, SCL_PIN); // initialize I2C
+  pinMode(LIS3DH_INT1_PIN, INPUT_PULLUP); // activate preferral
   delay(20);
-  initLIS3DH();  // initialize preferral
+  initLIS3DH(); // initialize preferral
   delay(20);
 
   // deep sleep interrupted, triggered by specififc pin
