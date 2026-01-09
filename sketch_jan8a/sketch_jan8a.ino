@@ -75,7 +75,7 @@ public:
       DeserializationError error = deserializeJson(doc, value);
       
       if (error) {
-        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Invalid request.\"}");
+        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}");
         pStatusChar->notify();
 
         return;
@@ -90,7 +90,7 @@ public:
         deviceToken = doc["devicetoken"].as<String>();
 
         if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
-          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Missing required parameters.\"}");
+          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"missing_parameters\"}");
           pStatusChar->notify();
 
           return;
@@ -118,14 +118,14 @@ public:
 
           return;
         } else {
-          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Check Wi-Fi credentials and try again.\"}");
+          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"wifi_error\"}");
           pStatusChar->notify();
 
           return;
         }
 
       } else {
-        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"unknown action\"}");
+        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"unknown_action\"}");
         pStatusChar->notify();
 
         return;
