@@ -1,18 +1,17 @@
 /* ---------- LIBRARIES ---------- */
 #include <Wire.h>
 #include <WiFi.h>
-#include <Ticker.h>
-#include <AsyncTCP.h>
 #include <esp_sleep.h>
-#include <WebServer.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
-#include <ESPAsyncWebServer.h>
+// #include <AsyncTCP.h>
+// #include <Ticker.h>
+// #include <WebServer.h>
+// #include <ESPAsyncWebServer.h>
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLEUtils.h>
 #include <BLE2902.h>
 
 
@@ -24,13 +23,15 @@
 #define SCL_PIN 4
 #define TOUCH_1 12
 // Custom service & characteristic UUIDs
-#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
-#define CREDENTIALS_UUID "87654321-4321-4321-4321-cba987654321"
+#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"  // service container
+#define CREDENTIALS_UUID "12345678-1234-1234-1234-123456789abd"  // write Wi-Fi credentials
+#define STATUS_UUID "12345678-1234-1234-1234-123456789abe"  // notify status back
+
 
 
 /* ---------- Object initializations ---------- */
-AsyncWebServer server(80);
-Ticker restartTicker;
+// AsyncWebServer server(80);
+// Ticker restartTicker;
 Preferences prefs;
 // pre-warm-up
 String homeSSID, homePASS, userID, deviceToken;
@@ -44,14 +45,130 @@ unsigned long APStartMillis = 0;
 constexpr const char *HARDWARE_VERSION = "1.0";
 constexpr const char *FIRMWARE_VERSION = "1.0";
 constexpr const char *AP_SSID = "HydroPing-PG1A2B3F";
-constexpr const char *AP_PASS = "";
-constexpr unsigned long long SETUP_TIMEOUT_MS = 5ULL * 60 * 1000;  // 5 min setup mode
+// constexpr const char *AP_PASS = "";
+constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
 
 
 /* ---------- Persisit through deep sleep ---------- */
 RTC_DATA_ATTR bool isDisconnected = false;
 RTC_DATA_ATTR bool inSetupMode = false;
 RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;  // default: 12h
+
+// pre-define
+bool connectToWiFi();
+bool aggregateInstructions(const String &payload);
+
+
+class CredentialsCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) override {
+    String value = pCharacteristic->getValue();
+  
+    if (value.length() == 0) {
+      return;
+    }
+    
+
+    // Serial.println("Received BLE data: " + String(value.c_str()));
+
+    // DynamicJsonDocument doc(256);
+    // DeserializationError error = deserializeJson(doc, value);
+    // if (error) {
+    //   Serial.println("Invalid JSON received via BLE!");
+    //   return;
+    // }
+
+    // String action = doc["action"] | "";  // default to empty string
+
+    Serial.println("Unknown action requested");
+    
+    pCharacteristic->setValue("{\"status\":\"unknown\"}");
+    pCharacteristic->notify();
+
+    // if (action == "connectWiFi") {
+    //   homeSSID = doc["ssid"].as<String>();
+    //   homePASS = doc["password"].as<String>();
+    //   userID = doc["userid"].as<String>();
+    //   // deviceToken = doc["devicetoken"].as<String>();
+
+    //   if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
+    //     pCharacteristic->setValue("{\"status\":\"wrong cred\"}");
+    //     pCharacteristic->notify();
+    //   }
+
+    //   prefs.begin("wifi", false);
+    //   prefs.putString("ssid", homeSSID);
+    //   prefs.putString("pass", homePASS);
+    //   prefs.putString("userid", userID);
+    //   // prefs.putString("devicetoken", deviceToken);
+    //   prefs.end();
+
+    //   Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
+
+    //   if (connectToWiFi()) {
+    //     // String deviceId = WiFi.macAddress();
+    //     // String deviceId = "B6:3A:45:34:B8:34";
+
+    //     // call generateInitialDeviceToken and save the token
+    //     // HTTPClient http;
+    //     // http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
+    //     // http.addHeader("Content-Type", "application/json");
+    //     // String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
+    //     // int httpCode = http.POST(json);
+    //     // yield();
+
+    //     // if (httpCode == 200) {
+    //     //   String payload = http.getString();
+    //     //   yield();
+
+    //     //   // TODO: confirm if deviceToken is indeed sent
+
+    //     //   bool success = aggregateInstructions(payload);  // save deviceToken
+
+    //     //   http.end();
+
+    //     //   if (success) {
+    //     //     // reseting device mode on new activation
+    //     //     isDisconnected = false;
+
+    //     //     pCharacteristic->setValue("{\"status\":\"success\"}");
+    //     //     pCharacteristic->notify();
+
+    //     //     // restartTicker.once(1, []() {
+    //     //     //     deviceInitialized = true;
+    //     //     //   });
+
+    //     //     delay(250);
+
+    //     //     deviceInitialized = true;
+
+    //     //     return;
+    //     //   }
+
+    //     //   Serial.println("no token");
+
+    //     //   // issue with payload aka device token
+    //     //   pCharacteristic->setValue("{\"status\":\"issue with token\"}");
+    //     //   pCharacteristic->notify();
+    //     // }
+
+    //     // http.end();
+
+    //     // http not 200
+    //     pCharacteristic->setValue("{\"status\":\"not 200\"}");
+    //     pCharacteristic->notify();
+    //   } else {
+    //     Serial.println("wifi no connect");
+    //     pCharacteristic->setValue("{\"status\":\"wifi no connect\"}");
+    //     pCharacteristic->notify();
+    //   }
+
+    // } else {
+    //   Serial.println("Unknown action requested");
+    //   pCharacteristic->setValue("{\"status\":\"unknown\"}");
+    //   pCharacteristic->notify();
+    // }
+  }
+};
 
 
 /* ---------- LIS3DH functions ---------- */
@@ -80,17 +197,6 @@ uint8_t readRegister(uint8_t reg) {
 // input (): N/A
 // output (void): initialize the chip
 void initLIS3DH() {
-  // writeRegister(0x20, 0x47); // CTRL_REG1: 50 Hz, XYZ enabled
-  // writeRegister(0x21, 0x40); // CTRL_REG2: High-pass filter to click
-  // writeRegister(0x22, 0x80); // CTRL_REG3: Click interrupt on INT1
-  // writeRegister(0x23, 0x30); // CTRL_REG4: ±8g full scale for less sensitivity
-  // writeRegister(0x24, 0x00); // CTRL_REG5: disable latching on INT2
-  // writeRegister(0x32, 0x04); // CLICK_CFG: enable double tap on Z
-  // writeRegister(0x33, 0x7F); // CLICK_THS: threshold
-  // writeRegister(0x34, 0x10); // TIME_LIMIT: time between taps
-  // writeRegister(0x35, 0x40); // TIME_LATENCY
-  // writeRegister(0x36, 0xC0); // TIME_WINDOW
-
   writeRegister(0x20, 0x47);  // CTRL_REG1: 50Hz, XYZ enabled
   writeRegister(0x21, 0x10);  // CTRL_REG2: HPF disabled (simplify for now)
   writeRegister(0x22, 0x40);  // CTRL_REG3: route INT1 to INT1 pin
@@ -124,13 +230,18 @@ void startBLE() {
   // 3. Create BLE service
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  // 4. Create BLE characteristic
-  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
-    CREDENTIALS_UUID,
-    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+  // 4a. Create Credentials characteristic (write-only from app)
+  BLECharacteristic *pCredentialsChar = pService->createCharacteristic(
+      CREDENTIALS_UUID,
+      BLECharacteristic::PROPERTY_WRITE
+  );
+  pCredentialsChar->setCallbacks(new CredentialsCallbacks()); // handle incoming Wi-Fi creds
 
-  // Optional: set callbacks to handle writes
-  // pCharacteristic->setCallbacks(new CredentialsCallbacks());
+  // 4b. Create Status characteristic (notify from ESP)
+  BLECharacteristic *pStatusChar = pService->createCharacteristic(
+      STATUS_UUID,
+      BLECharacteristic::PROPERTY_NOTIFY
+  );
 
   // 5. Start the service
   pService->start();
@@ -141,114 +252,6 @@ void startBLE() {
   pAdvertising->start();
 
   Serial.println("BLE initialized and advertising started!");
-
-  // // receive and save STA wifi credentials
-  // server.on(
-  //   "/connect", HTTP_POST,
-  //   // onRequest: send initial response later in onBody
-  //   [](AsyncWebServerRequest *request) {
-  //     // We won't send response here because body not yet received
-  //   },
-  //   // onUpload (not used)
-  //   NULL,
-  //   // onBody
-  //   [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-  //     String body = String((char *)data).substring(0, len);
-  //     StaticJsonDocument<256> doc;
-  //     DeserializationError error = deserializeJson(doc, body);
-
-  //     if (error) {
-  //       request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
-  //       request->onDisconnect([]() {
-  //         delay(1000);
-  //       });
-  //       return;
-  //     }
-
-  //     homeSSID = doc["ssid"].as<String>();
-  //     homePASS = doc["password"].as<String>();
-  //     userID = doc["userid"].as<String>();
-  //     // deviceToken = doc["devicetoken"].as<String>();
-
-  //     if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
-  //       request->send(400, "application/json", "{\"error\":\"Missing complete credentials\"}");
-  //       request->onDisconnect([]() {
-  //         delay(1000);
-  //       });
-  //       return;
-  //     }
-
-  //     prefs.begin("wifi", false);
-  //     prefs.putString("ssid", homeSSID);
-  //     prefs.putString("pass", homePASS);
-  //     prefs.putString("userid", userID);
-  //     // prefs.putString("devicetoken", deviceToken);
-  //     prefs.end();
-
-  //     if (connectToWiFi()) {
-  //       String deviceId = WiFi.softAPmacAddress();
-
-  //       // call generateInitialDeviceToken and save the token
-  //       HTTPClient http;
-  //       http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
-  //       http.addHeader("Content-Type", "application/json");
-  //       String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
-  //       int httpCode = http.POST(json);
-  //       yield();
-
-  //       if (httpCode == 200) {
-  //         String payload = http.getString();
-  //         yield();
-
-  //         // TODO: confirm if deviceToken is indeed sent
-
-  //         bool success = aggregateInstructions(payload);  // save deviceToken
-
-  //         http.end();
-
-  //         if (success) {
-  //           // reseting device mode on new activation
-  //           isDisconnected = false;
-
-  //           request->send(200, "application/json", "{\"hasError\":false}");
-
-  //           request->onDisconnect([]() {
-  //             delay(1000);
-
-  //             restartTicker.once(1, []() {
-  //               deviceInitialized = true;
-  //             });
-  //           });
-
-  //           return;
-  //         }
-
-  //         // issue with payload aka device token
-  //         request->send(400, "application/json", "{\"hasError\":true}");
-  //         request->onDisconnect([]() {
-  //           delay(1000);
-  //         });
-  //       }
-
-  //       http.end();
-
-  //       // http not 200
-  //       request->send(400, "application/json", "{\"hasError\":true}");
-  //       request->onDisconnect([]() {
-  //         delay(1000);
-  //       });
-  //     }
-
-  //     // couldnt connect to wifi
-  //     request->send(400, "application/json", "{\"hasError\":true}");
-  //     request->onDisconnect([]() {
-  //       delay(1000);
-  //     });
-  //     return;
-  //   });
-
-
-  // server.begin();
 }
 
 // II. stopBLE
@@ -454,98 +457,6 @@ void setup() {
   delay(500);
   scheduleNextSleep();
 }
-
-class CredentialsCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) override {
-    String value = pCharacteristic->getValue();
-    
-    if (value.length() == 0) return;
-
-    Serial.println("Received BLE data: " + String(value.c_str()));
-
-    DynamicJsonDocument doc(256);
-    DeserializationError error = deserializeJson(doc, value);
-    if (error) {
-      Serial.println("Invalid JSON received via BLE!");
-      return;
-    }
-
-    String action = doc["action"] | "";  // default to empty string
-
-    if (action == "connectWiFi") {
-      homeSSID = doc["ssid"].as<String>();
-      homePASS = doc["password"].as<String>();
-      userID = doc["userid"].as<String>();
-      // deviceToken = doc["devicetoken"].as<String>();
-
-      if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
-        pCharacteristic->setValue("{\"status\":\"wrong cred\"}");
-        pCharacteristic->notify();
-      }
-
-      prefs.begin("wifi", false);
-      prefs.putString("ssid", homeSSID);
-      prefs.putString("pass", homePASS);
-      prefs.putString("userid", userID);
-      // prefs.putString("devicetoken", deviceToken);
-      prefs.end();
-
-      Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
-
-      if (connectToWiFi()) {
-        String deviceId = WiFi.softAPmacAddress();
-
-        // call generateInitialDeviceToken and save the token
-        HTTPClient http;
-        http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/generateInitialDeviceToken");
-        http.addHeader("Content-Type", "application/json");
-        String json = "{\"userId\":\"" + String(userID) + "\",\"deviceId\":\"" + String(deviceId) + "\"}";
-        int httpCode = http.POST(json);
-        yield();
-
-        if (httpCode == 200) {
-          String payload = http.getString();
-          yield();
-
-          // TODO: confirm if deviceToken is indeed sent
-
-          bool success = aggregateInstructions(payload);  // save deviceToken
-
-          http.end();
-
-          if (success) {
-            // reseting device mode on new activation
-            isDisconnected = false;
-
-            pCharacteristic->setValue("{\"status\":\"success\"}");
-            pCharacteristic->notify();
-
-            restartTicker.once(1, []() {
-                deviceInitialized = true;
-              });
-
-            return;
-          }
-
-          // issue with payload aka device token
-          pCharacteristic->setValue("{\"status\":\"issue with token\"}");
-          pCharacteristic->notify();
-        }
-
-        http.end();
-
-        // http not 200
-        pCharacteristic->setValue("{\"status\":\"not 200\"}");
-        pCharacteristic->notify();
-      }
-
-    } else {
-      Serial.println("Unknown action requested");
-      pCharacteristic->setValue("{\"status\":\"unknown\"}");
-      pCharacteristic->notify();
-    }
-  }
-};
 
 
 // II. loop
