@@ -88,7 +88,7 @@ public:
         // deviceToken = doc["devicetoken"].as<String>();
 
         if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty()) {
-          pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Missing required parameters.\"}");
+          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Missing required parameters.\"}");
           pStatusChar->notify();
 
           return;
@@ -148,7 +148,8 @@ public:
 
          isDisconnected = false;
 
-          pStatusChar->setValue("{\"hasError\":false,\"errorMessage\":\"\"}");
+          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":false,\"errorMessage\":\"\"}");
+
           pStatusChar->notify();
 
           delay(250);
@@ -157,14 +158,14 @@ public:
 
           return;
         } else {
-          pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"Check Wi-Fi credentials and try again.\"}");
+          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"Check Wi-Fi credentials and try again.\"}");
           pStatusChar->notify();
 
           return;
         }
 
       } else {
-        pStatusChar->setValue("{\"hasError\":true,\"errorMessage\":\"unknown action\"}");
+        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"unknown action\"}");
         pStatusChar->notify();
 
         return;
