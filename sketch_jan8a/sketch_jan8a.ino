@@ -1,15 +1,11 @@
 /* ---------- LIBRARIES ---------- */
 #include <Wire.h>
 #include <WiFi.h>
+#include <AESLib.h>
 #include <esp_sleep.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
-// #include <AsyncTCP.h>
-// #include <Ticker.h>
-// #include <WebServer.h>
-// #include <ESPAsyncWebServer.h>
-
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
@@ -28,9 +24,9 @@
 #define STATUS_UUID "12345678-1234-1234-1234-123456789abe"       // notify status back
 
 
-
 /* ---------- Object initializations ---------- */
 // Ticker restartTicker;
+AESLib aesLib;
 Preferences prefs;
 BLECharacteristic *pStatusChar;
 // pre-warm-up
@@ -38,13 +34,14 @@ String homeSSID, homePASS, userID, deviceToken;
 
 
 /* ---------- Device modes and configurations ---------- */
+byte aesKey[16] = { ... }; // shared key
 bool deviceInitialized = false;
 bool APModeActive = false;
 unsigned long APStartMillis = 0;
 // known at complie time
 constexpr const char *HARDWARE_VERSION = "1.0";
 constexpr const char *FIRMWARE_VERSION = "1.0";
-constexpr const char *AP_SSID = "HydroPing-PG1A2B3F";
+constexpr const char *BLE_SSID = "HydroPing-PG1A2B3F";
 // constexpr const char *AP_PASS = "";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 3ULL * 60 * 1000;  // 3 min setup mode
 
@@ -58,6 +55,24 @@ RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;  /
 bool connectToWiFi();
 bool aggregateInstructions(const String &payload);
 
+
+bool AESDecrypt(String &input, String &output) {
+    byte inputBytes[input.length()];
+    input.getBytes(inputBytes, input.length());
+    byte decrypted[input.length()];
+    aesLib.decrypt(inputBytes, input.length(), decrypted, aesKey, 128);
+    output = String((char*)decrypted);
+    return true; // or false if decryption fails
+}
+
+void AESEncrypt(String &input, String &output) {
+    byte inputBytes[input.length()];
+    input.getBytes(inputBytes, input.length());
+    byte encrypted[input.length()];
+    aesLib.encrypt(inputBytes, input.length(), encrypted, aesKey, 128);
+    output = String((char*)encrypted);
+}
+
 class CredentialsCallbacks : public BLECharacteristicCallbacks {
 public:
   CredentialsCallbacks(BLECharacteristic *statusChar) {
@@ -65,17 +80,36 @@ public:
   }
 
   void onWrite(BLECharacteristic *pChar) override {
-    String value = pChar->getValue();
+    // String value = pChar->getValue();
     // Serial.println("Received BLE data: " + value);
+
+    String encryptedValue = pChar->getValue();
+    String decryptedValue;
+
+    if (!AESDecrypt(encryptedValue, decryptedValue)) {
+        // invalid or corrupted message
+        if (pStatusChar) {
+            pStatusChar->setValue(encrypt("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_encryption\"}"));
+            pStatusChar->notify();
+        }
+        return;
+    }
 
     // respond via status characteristic
     if (pStatusChar) {
       
       DynamicJsonDocument doc(256);
-      DeserializationError error = deserializeJson(doc, value);
+      DeserializationError error = deserializeJson(doc, decryptedValue);
       
       if (error) {
-        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}");
+        // pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}");
+        // pStatusChar->notify();
+
+        String jsonResponse = "{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}";
+        String encryptedResponse;
+        AESEncrypt(jsonResponse, encryptedResponse);
+
+        pStatusChar->setValue(encryptedResponse);
         pStatusChar->notify();
 
         return;
@@ -185,7 +219,7 @@ void startBLE() {
   delay(500);
 
   // 1. Initialize BLE
-  BLEDevice::init(AP_SSID);
+  BLEDevice::init(BLE_SSID);
 
   // 2. Create BLE server
   BLEServer *pServer = BLEDevice::createServer();
