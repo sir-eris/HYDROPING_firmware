@@ -1,7 +1,6 @@
 /* ---------- LIBRARIES ---------- */
 #include <Wire.h>
 #include <WiFi.h>
-#include <AESLib.h>
 #include <esp_sleep.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -9,6 +8,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
+
 
 
 /* ---------- DEFINITIONS ---------- */
@@ -26,7 +26,6 @@
 
 /* ---------- Object initializations ---------- */
 // Ticker restartTicker;
-AESLib aesLib;
 Preferences prefs;
 BLECharacteristic *pStatusChar;
 // pre-warm-up
@@ -34,7 +33,6 @@ String homeSSID, homePASS, userID, deviceToken;
 
 
 /* ---------- Device modes and configurations ---------- */
-byte aesKey[16] = { ... }; // shared key
 bool deviceInitialized = false;
 bool APModeActive = false;
 unsigned long APStartMillis = 0;
@@ -43,7 +41,7 @@ constexpr const char *HARDWARE_VERSION = "1.0";
 constexpr const char *FIRMWARE_VERSION = "1.0";
 constexpr const char *BLE_SSID = "HydroPing-PG1A2B3F";
 // constexpr const char *AP_PASS = "";
-constexpr unsigned long long SETUP_TIMEOUT_MS = 3ULL * 60 * 1000;  // 3 min setup mode
+constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
 
 
 /* ---------- Persisit through deep sleep ---------- */
@@ -56,22 +54,15 @@ bool connectToWiFi();
 bool aggregateInstructions(const String &payload);
 
 
-bool AESDecrypt(String &input, String &output) {
-    byte inputBytes[input.length()];
-    input.getBytes(inputBytes, input.length());
-    byte decrypted[input.length()];
-    aesLib.decrypt(inputBytes, input.length(), decrypted, aesKey, 128);
-    output = String((char*)decrypted);
-    return true; // or false if decryption fails
+void sendStatus(bool hasError, const char* msg) {
+    String json = String("{\"action\":\"connectWiFi\",\"hasError\":") +
+                  (hasError ? "true" : "false") +
+                  ",\"errorMessage\":\"" + msg + "\"}";
+
+    pStatusChar->setValue(json);
+    pStatusChar->notify();
 }
 
-void AESEncrypt(String &input, String &output) {
-    byte inputBytes[input.length()];
-    input.getBytes(inputBytes, input.length());
-    byte encrypted[input.length()];
-    aesLib.encrypt(inputBytes, input.length(), encrypted, aesKey, 128);
-    output = String((char*)encrypted);
-}
 
 class CredentialsCallbacks : public BLECharacteristicCallbacks {
 public:
@@ -80,90 +71,62 @@ public:
   }
 
   void onWrite(BLECharacteristic *pChar) override {
-    // String value = pChar->getValue();
-    // Serial.println("Received BLE data: " + value);
+    if (!pChar) return;
+    
+    String value = pChar->getValue();
 
-    String encryptedValue = pChar->getValue();
-    String decryptedValue;
-
-    if (!AESDecrypt(encryptedValue, decryptedValue)) {
-        // invalid or corrupted message
-        if (pStatusChar) {
-            pStatusChar->setValue(encrypt("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_encryption\"}"));
-            pStatusChar->notify();
-        }
-        return;
+    DynamicJsonDocument doc(256);
+    DeserializationError error = deserializeJson(doc, value);
+    
+    if (error) {
+      sendStatus(true, "invalid_request");
+      return;
     }
 
-    // respond via status characteristic
-    if (pStatusChar) {
-      
-      DynamicJsonDocument doc(256);
-      DeserializationError error = deserializeJson(doc, decryptedValue);
-      
-      if (error) {
-        // pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}");
-        // pStatusChar->notify();
+    String action = doc["action"] | "";
+    
+    if (action == "connectWiFi") {
 
-        String jsonResponse = "{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"invalid_request\"}";
-        String encryptedResponse;
-        AESEncrypt(jsonResponse, encryptedResponse);
+      homeSSID = doc["ssid"].as<String>();
+      homePASS = doc["password"].as<String>();
+      userID = doc["userid"].as<String>();
+      deviceToken = doc["devicetoken"].as<String>();
 
-        pStatusChar->setValue(encryptedResponse);
-        pStatusChar->notify();
+      if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
 
+        sendStatus(true, "missing_parameters");
         return;
       }
 
-      String action = doc["action"] | "";
-      
-      if (action == "connectWiFi") {
-        homeSSID = doc["ssid"].as<String>();
-        homePASS = doc["password"].as<String>();
-        userID = doc["userid"].as<String>();
-        deviceToken = doc["devicetoken"].as<String>();
+      prefs.begin("wifi", false);
+      prefs.putString("ssid", homeSSID);
+      prefs.putString("pass", homePASS);
+      prefs.putString("userid", userID);
+      prefs.putString("devicetoken", deviceToken);
+      prefs.end();
 
-        if (homeSSID.isEmpty() || homePASS.isEmpty() || userID.isEmpty() || deviceToken.isEmpty()) {
-          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"missing_parameters\"}");
-          pStatusChar->notify();
+      // Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
 
-          return;
-        }
+      if (connectToWiFi()) {
+        
+        isDisconnected = false;
 
-        prefs.begin("wifi", false);
-        prefs.putString("ssid", homeSSID);
-        prefs.putString("pass", homePASS);
-        prefs.putString("userid", userID);
-        prefs.putString("devicetoken", deviceToken);
-        prefs.end();
+        sendStatus(false, "");
 
-        // Serial.printf("Connecting to Wi-Fi: %s / %s / %s\n", homeSSID.c_str(), homePASS.c_str(), userID.c_str());
+        delay(250);
 
-        if (connectToWiFi()) {
-          
-         isDisconnected = false;
+        deviceInitialized = true;
 
-          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":false,\"errorMessage\":\"\"}");
-          pStatusChar->notify();
-
-          delay(250);
-
-          deviceInitialized = true;
-
-          return;
-        } else {
-          pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"wifi_error\"}");
-          pStatusChar->notify();
-
-          return;
-        }
-
+        return;
       } else {
-        pStatusChar->setValue("{\"action\":\"connectWiFi\",\"hasError\":true,\"errorMessage\":\"unknown_action\"}");
-        pStatusChar->notify();
-
+        
+        sendStatus(true, "wifi_error");
         return;
       }
+    } else {
+      
+      sendStatus(true, "unknown_action");
+      return;
     }
   }
 };
@@ -227,12 +190,12 @@ void startBLE() {
   // 3. Create BLE service
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  // 4b. Status characteristic
+  // 4a. Status characteristic
   pStatusChar = pService->createCharacteristic(
     STATUS_UUID,
     BLECharacteristic::PROPERTY_NOTIFY);
 
-  // 4a. Credentials characteristic
+  // 4b. Credentials characteristic
   BLECharacteristic *pCredentialsChar = pService->createCharacteristic(
     CREDENTIALS_UUID,
     BLECharacteristic::PROPERTY_WRITE);
@@ -253,11 +216,11 @@ void startBLE() {
 // input (): N/A
 // output (void): deactivate setup mode
 void stopBLE() {
-  WiFi.softAPdisconnect(true);
+  // WiFi.softAPdisconnect(true);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
-  delay(250);
+  delay(750);
 
   BLEDevice::deinit(true);
 
@@ -272,6 +235,7 @@ void stopBLE() {
 // output (bool): try to connect to wifi and return success state
 // NOTE: wifi mode set externally before calling this function
 bool connectToWiFi() {
+
   prefs.begin("wifi", true);
   homeSSID = prefs.getString("ssid", "");
   homePASS = prefs.getString("pass", "");
@@ -279,6 +243,8 @@ bool connectToWiFi() {
 
   if (homeSSID.isEmpty() || homePASS.isEmpty()) return false;
 
+  WiFi.setAutoReconnect(false);
+  WiFi.persistent(false);
   WiFi.begin(homeSSID.c_str(), homePASS.c_str());
 
   for (int i = 0; i < 20; ++i) {  // ≈10 s timeout
@@ -287,6 +253,12 @@ bool connectToWiFi() {
     }
     delay(250);
   }
+
+  WiFi.disconnect(true);   // drop connection + erase STA state
+  WiFi.mode(WIFI_OFF);
+  
+  delay(250);
+  
   return false;
 }
 
