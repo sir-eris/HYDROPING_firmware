@@ -10,7 +10,6 @@
 #include <BLE2902.h>
 
 
-
 /* ---------- DEFINITIONS ---------- */
 #define LIS3DH_ADDR 0x18
 #define LIS3DH_INT1_PIN 2
@@ -55,14 +54,11 @@ bool aggregateInstructions(const String &payload);
 
 
 void sendStatus(bool hasError, const char* msg) {
-    String json = String("{\"action\":\"connectWiFi\",\"hasError\":") +
-                  (hasError ? "true" : "false") +
-                  ",\"errorMessage\":\"" + msg + "\"}";
+    String json = String("{\"action\":\"connectWiFi\",\"hasError\":") + (hasError ? "true" : "false") + ",\"errorMessage\":\"" + msg + "\"}";
 
     pStatusChar->setValue(json);
     pStatusChar->notify();
 }
-
 
 class CredentialsCallbacks : public BLECharacteristicCallbacks {
 public:
@@ -235,7 +231,6 @@ void stopBLE() {
 // output (bool): try to connect to wifi and return success state
 // NOTE: wifi mode set externally before calling this function
 bool connectToWiFi() {
-
   prefs.begin("wifi", true);
   homeSSID = prefs.getString("ssid", "");
   homePASS = prefs.getString("pass", "");
@@ -292,11 +287,17 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   int httpCode = http.POST(json);
 
   if (httpCode > 0) {
-    String payload = http.getString();
+    if (httpCode > 199 && httCode < 400) {
+      String payload = http.getString();
+      bool success = aggregateInstructions(payload);  // perform pre-define changes given as intructions in the response payload
 
-    bool success = aggregateInstructions(payload);  // perform pre-define changes given as intructions in the response payload
-
-    // TODO: on false ???
+      // if (!success) {
+        // parse and save or call another API to report
+      // }
+    }
+    // else {
+      // parse and save or call another API to report
+    // }
   }
 
   http.end();
@@ -354,10 +355,15 @@ void scheduleNextSensorRead() {
     String macAddress = WiFi.macAddress();
     sendDataToDB(macAddress, moisture);
   }
+  // else {
+    // save locally ?
+  // }
 
   // turn wifi off
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+
+  delay(750);
 }
 
 
@@ -421,7 +427,6 @@ void setup() {
 
   // communicate to backend & go back to sleep
   // scheduleNextSensorRead();
-  delay(500);
   scheduleNextSleep();
 }
 
