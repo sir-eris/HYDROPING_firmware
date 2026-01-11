@@ -32,12 +32,12 @@ String homeSSID, homePASS, userID, deviceToken;
 
 
 /* ---------- Device modes and configurations ---------- */
-bool deviceInitialized = false;
-bool APModeActive = false;
+bool DI = false;
+// bool APModeActive = false;
 unsigned long APStartMillis = 0;
 // known at complie time
-constexpr const char *HARDWARE_VERSION = "1.0";
-constexpr const char *FIRMWARE_VERSION = "1.0";
+constexpr const char *H_V = "1.0";
+constexpr const char *F_V = "1.0";
 constexpr const char *BLE_SSID = "HydroPing-PG1A2B3F";
 // constexpr const char *AP_PASS = "";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
@@ -45,12 +45,15 @@ constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setu
 
 /* ---------- Persisit through deep sleep ---------- */
 RTC_DATA_ATTR bool isDisconnected = false;
-RTC_DATA_ATTR bool inSetupMode = false;
-RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;  // default: 12h
+RTC_DATA_ATTR bool ISM = false;
+RTC_DATA_ATTR uint64_t deepSleepTimeOut = 12ULL * 60ULL * 60ULL * 1000000ULL;
+RTC_DATA_ATTR uint64_t minSleepInterval = 60ULL * 60ULL * 1000000ULL;
+RTC_DATA_ATTR uint64_t maxSleepInterval = 24ULL * 60ULL * 60ULL * 1000000ULL;
+
 
 // pre-define
 bool connectToWiFi();
-bool aggregateInstructions(const String &payload);
+bool AINS(const String &payload);
 
 
 void sendStatus(bool hasError, const char* msg) {
@@ -111,7 +114,7 @@ public:
 
         delay(250);
 
-        deviceInitialized = true;
+        DI = true;
 
         return;
       } else {
@@ -171,8 +174,8 @@ void initLIS3DH() {
 // output (void): activate setup mode, start async webserver, listen and process
 // endpoints: /info, /connect
 void startBLE() {
-  APModeActive = true;
-  APStartMillis = millis();
+  // APModeActive = true;
+  // APStartMillis = millis();
   WiFi.mode(WIFI_STA);
 
   delay(500);
@@ -222,8 +225,8 @@ void stopBLE() {
 
   delay(250);
 
-  deviceInitialized = false,
-  APModeActive = false;
+  DI = false;
+  // APModeActive = false;
 }
 
 // III. connectToWiFi
@@ -270,7 +273,7 @@ uint32_t readTouchAvg(int pin, int samples = 8) {
 // II. sendDataToDB
 // input (String, unit32_t): hardware MacAddress, re
 // output (void): send moisture value to backend, check and handle resposnse, call to perform any instructions in the response payload
-void sendDataToDB(String macAddress, uint32_t moisture) {
+void SDTDB(String macAddress, uint32_t moisture) {
   prefs.begin("wifi", true);
   deviceToken = prefs.getString("devicetoken", "");
   prefs.end();
@@ -283,13 +286,19 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading");
   http.addHeader("Authorization", "Bearer " + deviceToken);
   http.addHeader("Content-Type", "application/json");
-  String json = "{\"moisture\":" + String(moisture) + "}";
-  int httpCode = http.POST(json);
+  String js = "{\"moisture\":" + String(moisture) + "}";
 
-  if (httpCode > 0) {
-    if (httpCode > 199 && httCode < 400) {
-      String payload = http.getString();
-      bool success = aggregateInstructions(payload);  // perform pre-define changes given as intructions in the response payload
+  int cd = http.POST(js);
+  yield();
+
+  if (cd > 0) {
+    if (cd > 199 && cd < 400) {
+      String pl = http.getString();
+      yield();
+
+      Serial.println(pl);
+
+      bool success = AINS(pl);  // perform pre-define changes given as intructions in the response payload
 
       // if (!success) {
         // parse and save or call another API to report
@@ -297,17 +306,24 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
     }
     // else {
       // parse and save or call another API to report
+      // Serial.println("error http code");
     // }
+
+    http.end();
+    return;
   }
 
+  // Serial.println("http code error");
+
   http.end();
+  return;
 }
 
-// III. aggregateInstructions
+// III. AINS
 // input (String): API JSON response payload
 // output (bool): check payload, execute small snippets based on defined keys in the payload
-// bool aggregateInstructions(String payload) {
-bool aggregateInstructions(const String &payload) {
+// bool AINS(String payload) {
+bool AINS(const String &payload) {
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -322,7 +338,7 @@ bool aggregateInstructions(const String &payload) {
       // expected in microseconds
       uint64_t newTimeout = doc["sleepTimeout"];
 
-      if (newTimeout >= 60ULL * 60ULL * 1000000ULL && newTimeout <= 24ULL * 60ULL * 60ULL * 1000000ULL) {  // safety check: larger than 1 hrs, less than 24 hrs
+      if (newTimeout >= minSleepInterval && newTimeout <= maxSleepInterval) {  // safety check: larger than 1 hrs, less than 24 hrs
         deepSleepTimeOut = newTimeout;
       }
     } else if (doc.containsKey("disconnected")) {  // disconnected: set device to disconnected and skip furthuer readings
@@ -337,10 +353,10 @@ bool aggregateInstructions(const String &payload) {
   return false;
 }
 
-// IV. scheduleNextSensorRead
+// IV. SNSR
 // input (): N/A
 // output (void): call readTouchAvg, set wifi mode to STA, connect to wifi, get hardware MacAddress, call sendDataToDB
-void scheduleNextSensorRead() {
+void SNSR() {
   if (isDisconnected) return;
 
   uint32_t moisture = readTouchAvg(TOUCH_1);
@@ -353,11 +369,11 @@ void scheduleNextSensorRead() {
 
   if (connectToWiFi()) {
     String macAddress = WiFi.macAddress();
-    sendDataToDB(macAddress, moisture);
+    SDTDB(macAddress, moisture);
   }
-  // else {
-    // save locally ?
-  // }
+  else {
+    Serial.println("Couldnt connect to wifi");
+  }
 
   // turn wifi off
   WiFi.disconnect(true);
@@ -371,7 +387,7 @@ void scheduleNextSensorRead() {
 // I. scheduleNextSleep
 // input (): N/A
 // output (void): initiate deep sleep timer, allow interruption by specific hardware pins
-void scheduleNextSleep() {
+void SNS() {
   Serial.println(("sleeping!"));
 
   esp_sleep_enable_ext0_wakeup((gpio_num_t)LIS3DH_INT1_PIN, 1);
@@ -397,22 +413,22 @@ void setup() {
   delay(20);
 
   // deep sleep interrupted, triggered by specififc pin
-  bool wokeFromShake = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
+  bool WFS = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
 
   // loop cycle allwed during setup mode
-  if (wokeFromShake && !inSetupMode) {
+  if (WFS && !ISM) {
 
     Serial.println(("Shook!"));
 
-    inSetupMode = true;
+    ISM = true;
 
     startBLE();
 
     delay(500);
 
-    unsigned long startTime = millis();
+    unsigned long st = millis();
 
-    while (!deviceInitialized && millis() - startTime < SETUP_TIMEOUT_MS) {
+    while (!DI && millis() - st < SETUP_TIMEOUT_MS) {
       delay(200);
     }
 
@@ -420,14 +436,14 @@ void setup() {
 
     delay(500);
 
-    inSetupMode = false;
+    ISM = false;
 
-    scheduleNextSleep();
+    SNS();
   }
 
   // communicate to backend & go back to sleep
-  // scheduleNextSensorRead();
-  scheduleNextSleep();
+  SNSR();
+  SNS();
 }
 
 
