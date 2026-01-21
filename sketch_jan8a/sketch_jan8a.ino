@@ -1,3 +1,4 @@
+
 /* ---------- LIBRARIES ---------- */
 #include <Wire.h>
 #include <WiFi.h>
@@ -33,14 +34,13 @@ String homeSSID, homePASS, userID, deviceToken;
 
 /* ---------- Device modes and configurations ---------- */
 bool DI = false;
-// bool APModeActive = false;
 unsigned long APStartMillis = 0;
 // known at complie time
 constexpr const char *H_V = "1.0";
 constexpr const char *F_V = "1.0";
 constexpr const char *BLE_SSID = "HydroPing-PG1A2B3F";
-// constexpr const char *AP_PASS = "";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
+static const char API_URL[] PROGMEM = "https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading";
 
 
 /* ---------- Persisit through deep sleep ---------- */
@@ -53,7 +53,7 @@ RTC_DATA_ATTR uint64_t maxSleepInterval = 24ULL * 60ULL * 60ULL * 1000000ULL;
 
 // pre-define
 bool connectToWiFi();
-bool AINS(const String &payload);
+bool handleOTA(const String &payload);
 
 
 void sendStatus(bool hasError, const char* msg) {
@@ -273,7 +273,7 @@ uint32_t readTouchAvg(int pin, int samples = 8) {
 // II. sendDataToDB
 // input (String, unit32_t): hardware MacAddress, re
 // output (void): send moisture value to backend, check and handle resposnse, call to perform any instructions in the response payload
-void SDTDB(String macAddress, uint32_t moisture) {
+void sendDataToDB(String macAddress, uint32_t moisture) {
   prefs.begin("wifi", true);
   deviceToken = prefs.getString("devicetoken", "");
   prefs.end();
@@ -283,47 +283,56 @@ void SDTDB(String macAddress, uint32_t moisture) {
   }
 
   HTTPClient http;
-  http.begin("https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading");
+  http.setTimeout(5000);
+
+  http.begin(String(API_URL));
   http.addHeader("Authorization", "Bearer " + deviceToken);
   http.addHeader("Content-Type", "application/json");
   String js = "{\"moisture\":" + String(moisture) + "}";
 
-  int cd = http.POST(js);
+  int httpCode = http.POST(js);
   yield();
 
-  if (cd > 0) {
-    if (cd > 199 && cd < 400) {
-      String pl = http.getString();
-      yield();
+  if (httpCode > 0) {
+    if (httpCode >= 200 && httpCode < 300) {
+      if (httpCode == 204) {
+      // no content
+      } else if (httpCode == 200) {
+        String pl = http.getString();
+        yield();
 
-      Serial.println(pl);
+        bool success = handleOTA(pl);  // perform pre-define changes given as intructions in the response payload
 
-      bool success = AINS(pl);  // perform pre-define changes given as intructions in the response payload
-
-      // if (!success) {
-        // parse and save or call another API to report
-      // }
+        if (!success) {
+          // parse and save or call another API to report
+          Serial.println("handling OTA failed");
+        }
+      }
     }
     // else {
-      // parse and save or call another API to report
-      // Serial.println("error http code");
+    //   // parse and save or call another API to report
+    //   Serial.println("error http code");
+    //   Serial.println(httpCode);
+
+    //   String pl = http.getString();
+    //   yield();
+
+    //   Serial.println(pl);
     // }
 
     http.end();
     return;
   }
 
-  // Serial.println("http code error");
-
   http.end();
   return;
 }
 
-// III. AINS
+// III. handleOTA
 // input (String): API JSON response payload
 // output (bool): check payload, execute small snippets based on defined keys in the payload
-// bool AINS(String payload) {
-bool AINS(const String &payload) {
+// bool handleOTA(String payload) {
+bool handleOTA(const String &payload) {
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
@@ -359,17 +368,21 @@ bool AINS(const String &payload) {
 void SNSR() {
   if (isDisconnected) return;
 
+  Serial.println("SNSR start");
+
   uint32_t moisture = readTouchAvg(TOUCH_1);
 
-  delay(250);
+  Serial.println(moisture);
+
+  delay(50);
 
   WiFi.mode(WIFI_STA);
 
-  delay(250);
+  delay(100);
 
   if (connectToWiFi()) {
     String macAddress = WiFi.macAddress();
-    SDTDB(macAddress, moisture);
+    sendDataToDB(macAddress, moisture);
   }
   else {
     Serial.println("Couldnt connect to wifi");
@@ -379,7 +392,9 @@ void SNSR() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
-  delay(750);
+  Serial.println("SNSR finish");
+
+  delay(100);
 }
 
 
@@ -387,7 +402,7 @@ void SNSR() {
 // I. scheduleNextSleep
 // input (): N/A
 // output (void): initiate deep sleep timer, allow interruption by specific hardware pins
-void SNS() {
+void scheduleNextSleep() {
   Serial.println(("sleeping!"));
 
   esp_sleep_enable_ext0_wakeup((gpio_num_t)LIS3DH_INT1_PIN, 1);
@@ -438,12 +453,12 @@ void setup() {
 
     ISM = false;
 
-    SNS();
+    scheduleNextSleep();
   }
 
   // communicate to backend & go back to sleep
   SNSR();
-  SNS();
+  scheduleNextSleep();
 }
 
 
