@@ -8,7 +8,6 @@
 #include <ArduinoJson.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLE2902.h>
 
 
 /* ---------- DEFINITIONS ---------- */
@@ -38,7 +37,7 @@ unsigned long APStartMillis = 0;
 // known at complie time
 constexpr const char *H_V = "1.0";
 constexpr const char *F_V = "1.0";
-constexpr const char *BLE_SSID = "HydroPing-PG1A2B3F";
+constexpr const char *BLE_SSID = "HydroPing-PG00RFX7";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
 static const char API_URL[] PROGMEM = "https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading";
 
@@ -174,8 +173,6 @@ void initLIS3DH() {
 // output (void): activate setup mode, start async webserver, listen and process
 // endpoints: /info, /connect
 void startBLE() {
-  // APModeActive = true;
-  // APStartMillis = millis();
   WiFi.mode(WIFI_STA);
 
   delay(500);
@@ -206,7 +203,10 @@ void startBLE() {
   // 6. Start advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
   pAdvertising->start();
+
 
   Serial.println("BLE initialized and advertising started!");
 }
@@ -215,7 +215,6 @@ void startBLE() {
 // input (): N/A
 // output (void): deactivate setup mode
 void stopBLE() {
-  // WiFi.softAPdisconnect(true);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
@@ -226,7 +225,6 @@ void stopBLE() {
   delay(250);
 
   DI = false;
-  // APModeActive = false;
 }
 
 // III. connectToWiFi
@@ -289,9 +287,14 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
   http.addHeader("Authorization", "Bearer " + deviceToken);
   http.addHeader("Content-Type", "application/json");
   String js = "{\"moisture\":" + String(moisture) + "}";
+  
+  // unsigned long startMs = millis();
 
   int httpCode = http.POST(js);
   yield();
+
+  // unsigned long durationMs = millis() - startMs;
+  // Serial.printf("HTTP %d in %lu ms\n", httpCode, durationMs);
 
   if (httpCode > 0) {
     if (httpCode >= 200 && httpCode < 300) {
@@ -301,6 +304,8 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
         String pl = http.getString();
         yield();
 
+        Serial.println(pl);
+
         bool success = handleOTA(pl);  // perform pre-define changes given as intructions in the response payload
 
         if (!success) {
@@ -309,16 +314,16 @@ void sendDataToDB(String macAddress, uint32_t moisture) {
         }
       }
     }
-    // else {
-    //   // parse and save or call another API to report
-    //   Serial.println("error http code");
-    //   Serial.println(httpCode);
+    else {
+      // parse and save or call another API to report
+      Serial.println("error http code");
+      Serial.println(httpCode);
 
-    //   String pl = http.getString();
-    //   yield();
+      String pl = http.getString();
+      yield();
 
-    //   Serial.println(pl);
-    // }
+      Serial.println(pl);
+    }
 
     http.end();
     return;
@@ -381,7 +386,8 @@ void SNSR() {
   delay(100);
 
   if (connectToWiFi()) {
-    String macAddress = WiFi.macAddress();
+    String macAddress = "B4:9E:2F:5B:CE:3D";
+    // WiFi.macAddress();
     sendDataToDB(macAddress, moisture);
   }
   else {
@@ -416,7 +422,7 @@ void scheduleNextSleep() {
 // input (): N/A
 // output (void): initialize hardware layers, communicate to backend & go back to sleep, allow setup mode loop cycle
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
   while (!Serial) delay(10);
   Serial.setDebugOutput(true);
   delay(500);
@@ -453,6 +459,7 @@ void setup() {
 
     ISM = false;
 
+    // SNSR(); // remove
     scheduleNextSleep();
   }
 
