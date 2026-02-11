@@ -30,7 +30,6 @@ Preferences prefs;
 BLECharacteristic *pStatusChar;
 // pre-warm-up
 String homeSSID, homePASS, userID, deviceToken;
-// String NETWORK_NAME = "HydroPing-PG00RFX7";
 
 
 /* ---------- Device modes and configurations ---------- */
@@ -39,6 +38,7 @@ unsigned long APStartMillis = 0;
 // known at complie time
 constexpr const char *H_V = "1.0";
 constexpr const char *F_V = "1.0";
+constexpr const char *NETWORK_NAME = "HydroPing-PG00RFX7";
 constexpr unsigned long long SETUP_TIMEOUT_MS = 2ULL * 60 * 1000;  // 2 min setup mode
 static const char API_URL[] PROGMEM = "https://q15ur4emu9.execute-api.us-east-2.amazonaws.com/default/enterProbeReading";
 
@@ -176,38 +176,7 @@ void initLIS3DH() {
 void startBLE() {
   WiFi.mode(WIFI_STA);
 
-  delay(500);
-
-  // 1. Initialize BLE
-  // BLEDevice::init(NETWORK_NAME);
-
-  // // 2. Create BLE server
-  // BLEServer *pServer = BLEDevice::createServer();
-
-  // // 3. Create BLE service
-  // BLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // // 4a. Status characteristic
-  // pStatusChar = pService->createCharacteristic(
-  //   STATUS_UUID,
-  //   BLECharacteristic::PROPERTY_NOTIFY);
-
-  // // 4b. Credentials characteristic
-  // BLECharacteristic *pCredentialsChar = pService->createCharacteristic(
-  //   CREDENTIALS_UUID,
-  //   BLECharacteristic::PROPERTY_WRITE);
-  // pCredentialsChar->setCallbacks(new CredentialsCallbacks(pStatusChar));
-
-  // // 5. Start the service
-  // pService->start();
-
-  // // 6. Start advertising
-  // BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  // pAdvertising->addServiceUUID(SERVICE_UUID);
-  
-  // pAdvertising->start();
-
-  String NETWORK_NAME = "HydroPing-PG00RFX7";
+  delay(250);
 
   BLEDevice::init(NETWORK_NAME);
 
